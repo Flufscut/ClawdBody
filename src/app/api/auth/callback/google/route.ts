@@ -224,9 +224,9 @@ async function handleGmailCallback(request: NextRequest, userId: string, code: s
       // Get user's email address
       const userEmail = await gmailClient.getUserEmail()
 
-      // Fetch ALL messages with pagination
-      console.log('Fetching all Gmail messages...')
-      const allMessages = await gmailClient.fetchAllMessages(100)
+      // Fetch messages (limit to 50 to avoid quota issues)
+      console.log('Fetching Gmail messages...')
+      const allMessages = await gmailClient.fetchAllMessages(50, 50)
       console.log(`Fetched ${allMessages.length} total messages`)
 
       const githubClient = new GitHubClient(githubAccount.access_token)

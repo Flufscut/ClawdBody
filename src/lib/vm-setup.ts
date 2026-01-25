@@ -576,6 +576,9 @@ echo "INSTALL_COMPLETE" >> /tmp/clawdbot-install.log
   /**
    * Configure Clawdbot with Telegram channel and autonomous task execution
    * Sets up heartbeat for periodic knowledge checks and task inference
+   *
+   * Note: System prompt is configured via CLAUDE.md file in workspace, not config
+   * Heartbeat config goes under agents.defaults.heartbeat (not root level)
    */
   async setupClawdbotTelegram(options: {
     claudeApiKey: string
@@ -605,8 +608,10 @@ echo "INSTALL_COMPLETE" >> /tmp/clawdbot-install.log
     // Build Telegram allowFrom config
     const allowFromJson = telegramUserId ? `"allowFrom": ["${telegramUserId}"],` : ''
 
-    // System prompt for autonomous task execution
-    const systemPrompt = `You are Samantha, an autonomous AI assistant with access to a knowledge repository.
+    // Create CLAUDE.md file in workspace for system prompt (Clawdbot reads this automatically)
+    const claudeMdContent = `# Samantha - Autonomous AI Assistant
+
+You are Samantha, an autonomous AI assistant with access to a knowledge repository.
 
 Your workspace is at /home/user/clawd.
 
@@ -636,9 +641,39 @@ The vault contains your primary knowledge base including tasks, notes, projects,
 3. Inferred tasks from knowledge analysis
 4. Proactive improvements and suggestions
 
-Always keep the user informed of what you're working on and any significant decisions.`
+Always keep the user informed of what you're working on and any significant decisions.
+`
 
-    // Create config JSON with heartbeat enabled
+    // Write CLAUDE.md to workspace
+    const claudeMdB64 = Buffer.from(claudeMdContent).toString('base64')
+    await this.runCommand(
+      `echo '${claudeMdB64}' | base64 -d > /home/user/clawd/CLAUDE.md`,
+      'Create CLAUDE.md system prompt'
+    )
+
+    // Create HEARTBEAT.md checklist for heartbeat runs
+    const heartbeatMdContent = `# Heartbeat Checklist
+
+During heartbeat, check the following:
+
+1. **Recent vault changes**: \`find /home/user/clawd/knowledge/vault -type f -mmin -60\`
+2. **Task files**: Look for tasks.md, TODO.md, or task lists in the vault
+3. **Pending work**: Identify any work that needs to be done
+
+## Response Format
+
+- If nothing needs attention: Reply with \`HEARTBEAT_OK\`
+- If tasks found: Describe what you're working on and begin execution
+- If significant updates: Report findings to the user
+`
+
+    const heartbeatMdB64 = Buffer.from(heartbeatMdContent).toString('base64')
+    await this.runCommand(
+      `echo '${heartbeatMdB64}' | base64 -d > /home/user/clawd/HEARTBEAT.md`,
+      'Create HEARTBEAT.md checklist'
+    )
+
+    // Create config JSON with heartbeat under agents.defaults (correct location)
     const configJson = `{
   "meta": {
     "lastTouchedVersion": "${clawdbotVersion}"
@@ -654,20 +689,20 @@ Always keep the user informed of what you're working on and any significant deci
   "agents": {
     "defaults": {
       "workspace": "/home/user/clawd",
-      "systemPrompt": ${JSON.stringify(systemPrompt)},
       "compaction": {
         "mode": "safeguard"
       },
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
+      },
+      "heartbeat": {
+        "every": "${heartbeatIntervalMinutes}m",
+        "target": "last",
+        "activeHours": { "start": "00:00", "end": "24:00" },
+        "includeReasoning": true
       }
     }
-  },
-  "heartbeat": {
-    "enabled": true,
-    "intervalMinutes": ${heartbeatIntervalMinutes},
-    "prompt": "Heartbeat check: Review the vault at /home/user/clawd/knowledge/vault for any updates or tasks. Start by listing recent changes with 'find /home/user/clawd/knowledge/vault -type f -mmin -60' to see files modified in the last hour. Check for tasks.md, TODO.md, or task lists. If there are pending tasks, create a plan and begin work. If no explicit tasks, analyze the vault contents and identify useful work to do. Report back with HEARTBEAT_OK if nothing needs immediate attention, or describe what you're working on."
   },
   "messages": {
     "ackReactionScope": "group-mentions"
@@ -775,16 +810,8 @@ fi
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] Clawdbot found: $(which clawdbot)" >> /tmp/clawdbot.log
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running: clawdbot gateway run" >> /tmp/clawdbot.log
 
-# Run gateway (don't use exec, so we can catch errors)
-clawdbot gateway run 2>&1 | while IFS= read -r line; do
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $line" >> /tmp/clawdbot.log
-    echo "$line"
-done
-
-# If we get here, the gateway exited
-EXIT_CODE=$?
-echo "[$(date +'%Y-%m-%d %H:%M:%S')] Gateway exited with code: $EXIT_CODE" >> /tmp/clawdbot.log
-exit $EXIT_CODE
+# Run gateway and redirect all output to log
+exec clawdbot gateway run >> /tmp/clawdbot.log 2>&1
 `
 
     const scriptB64 = Buffer.from(startupScript).toString('base64')
@@ -794,11 +821,16 @@ exit $EXIT_CODE
       'Create Clawdbot startup script'
     )
 
-    // Kill any existing gateway process first
-    await this.runCommand(
-      "pkill -f 'clawdbot gateway' || true",
-      'Kill existing gateway process'
-    )
+    // Kill any existing gateway process first (ignore errors if none exists)
+    try {
+      await this.runCommand(
+        "pkill -f 'clawdbot gateway' 2>/dev/null || true",
+        'Kill existing gateway process'
+      )
+    } catch (error) {
+      // Ignore errors - process might not exist
+      console.log('No existing gateway process to kill')
+    }
 
     // Wait a moment for process to die
     await new Promise(resolve => setTimeout(resolve, 2000))
@@ -810,23 +842,38 @@ exit $EXIT_CODE
     )
 
     // Wait a moment for startup
-    await new Promise(resolve => setTimeout(resolve, 5000))
+    await new Promise(resolve => setTimeout(resolve, 8000))
 
-    // Check if gateway is running (with retries)
+    // Check if gateway is running (with retries and port verification)
     let isRunning = false
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const checkResult = await this.runCommand(
-        "pgrep -f 'clawdbot gateway' > /dev/null && echo 'RUNNING' || echo 'NOT_RUNNING'",
-        'Check gateway status'
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // Check if process exists
+      const processCheck = await this.runCommand(
+        "pgrep -f 'clawdbot gateway' > /dev/null && echo 'PROCESS_EXISTS' || echo 'NO_PROCESS'",
+        'Check gateway process'
       )
 
-      isRunning = checkResult.output.includes('RUNNING')
+      const hasProcess = processCheck.output.includes('PROCESS_EXISTS')
       
-      if (isRunning) break
+      if (hasProcess) {
+        // Also verify port is listening (more reliable check)
+        const portCheck = await this.runCommand(
+          "netstat -tlnp 2>/dev/null | grep 18789 > /dev/null || ss -tlnp 2>/dev/null | grep 18789 > /dev/null && echo 'PORT_LISTENING' || echo 'PORT_NOT_LISTENING'",
+          'Check gateway port'
+        )
+        
+        if (portCheck.output.includes('PORT_LISTENING')) {
+          isRunning = true
+          break
+        } else {
+          // Process exists but port not listening yet - wait longer
+          console.log(`Gateway process exists but port not listening yet (attempt ${attempt + 1}/5)`)
+        }
+      }
       
-      // Wait a bit longer before next check
-      if (attempt < 2) {
-        await new Promise(resolve => setTimeout(resolve, 3000))
+      // Wait before next check
+      if (attempt < 4) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
       }
     }
 
