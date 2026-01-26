@@ -71,12 +71,24 @@ model SetupState {
   claudeApiKey String?
   orgoApiKey   String?
 
+  // AWS Credentials (encrypted in production)
+  awsAccessKeyId     String?
+  awsSecretAccessKey String?
+  awsRegion          String?  // Default: us-east-1
+  awsInstanceType    String?  // Default: t3.medium
+
   // Orgo VM info
   orgoProjectId   String?
   orgoProjectName String?
   orgoComputerId  String?
   orgoComputerUrl String?
   vmStatus        String? // creating, starting, running, stopped
+
+  // AWS EC2 instance info
+  awsInstanceId     String?
+  awsInstanceName   String?
+  awsPublicIp       String?
+  awsPrivateKey     String?  // SSH private key for the instance
 
   // GitHub vault repo
   vaultRepoName String?

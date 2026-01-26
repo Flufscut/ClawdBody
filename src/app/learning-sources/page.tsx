@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { Mail, Calendar, MessageSquare, FileText, MessageCircle, Bot, Video, Phone, Loader2, RefreshCw, Check, Key, AlertCircle, ArrowRight, ExternalLink, LogOut, Github, X, Server, GitBranch, Terminal, CheckCircle2, ChevronDown, ChevronUp, Trash2, XCircle } from 'lucide-react'
+import { WebTerminal } from '@/components/WebTerminal'
 
 interface Connector {
   id: string
@@ -107,8 +108,15 @@ interface SetupStatus {
   clawdbotInstalled?: boolean
   telegramConfigured?: boolean
   gatewayStarted?: boolean
+  // Orgo-specific
   orgoComputerId?: string
   orgoComputerUrl?: string
+  // AWS-specific
+  awsInstanceId?: string
+  awsInstanceName?: string
+  awsPublicIp?: string
+  awsRegion?: string
+  // Common
   vaultRepoUrl?: string
   errorMessage?: string
   vmProvider?: string
@@ -523,7 +531,7 @@ export default function LearningSourcesPage() {
                 setSetupLogs([])
               }}
             />
-          ) : setupStatus?.status === 'ready' && setupStatus?.orgoComputerId ? (
+          ) : setupStatus?.status === 'ready' && (setupStatus?.orgoComputerId || setupStatus?.awsInstanceId) ? (
             <ComputerConnectedView 
               setupStatus={setupStatus}
               onStatusUpdate={async () => {
@@ -1499,8 +1507,12 @@ function ComputerConnectedView({
   const [isStartingGateway, setIsStartingGateway] = useState(false)
   const [showGatewayLogs, setShowGatewayLogs] = useState(false)
 
-  // Poll for screenshots continuously
+  // Poll for screenshots continuously (Orgo only - AWS doesn't support screenshots)
   useEffect(() => {
+    // Skip for AWS - no screenshot API available
+    if (setupStatus?.vmProvider === 'aws') {
+      return
+    }
     if (!setupStatus?.orgoComputerId || !setupStatus?.vmCreated) {
       return
     }
@@ -1587,7 +1599,10 @@ function ComputerConnectedView({
   }, [setupStatus?.orgoComputerId, setupStatus?.vmCreated])
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete your computer? This will reset your setup and you will need to start over.')) {
+    const message = setupStatus.vmProvider === 'aws'
+      ? 'Are you sure you want to terminate your EC2 instance? This will stop all running services and you will need to set up again.'
+      : 'Are you sure you want to delete your computer? This will reset your setup and you will need to start over.'
+    if (!confirm(message)) {
       return
     }
 
@@ -1606,8 +1621,21 @@ function ComputerConnectedView({
       {/* VM Stream (Left Column - 2/3 width) */}
       <div className="lg:col-span-2 bg-sam-surface/50 border border-sam-border rounded-2xl p-4 flex flex-col">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-display font-bold text-sam-text">VM Screen</h2>
-          {setupStatus?.orgoComputerUrl && (
+          <h2 className="text-xl font-display font-bold text-sam-text">
+            {setupStatus?.vmProvider === 'aws' ? 'EC2 Instance' : 'VM Screen'}
+          </h2>
+          {setupStatus?.vmProvider === 'aws' && setupStatus?.awsPublicIp && (
+            <a
+              href={`https://${setupStatus.awsRegion || 'us-east-1'}.console.aws.amazon.com/ec2/home?region=${setupStatus.awsRegion || 'us-east-1'}#InstanceDetails:instanceId=${setupStatus.awsInstanceId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-sam-accent hover:underline"
+            >
+              Open in AWS Console
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+          {setupStatus?.vmProvider !== 'aws' && setupStatus?.orgoComputerUrl && (
             <a
               href={setupStatus.orgoComputerUrl}
               target="_blank"
@@ -1619,8 +1647,15 @@ function ComputerConnectedView({
             </a>
           )}
         </div>
-        <div className="aspect-video bg-sam-bg flex items-center justify-center relative flex-1 rounded-lg overflow-hidden">
-          {setupStatus?.vmCreated && setupStatus?.orgoComputerId ? (
+        <div className="bg-sam-bg flex items-center justify-center relative flex-1 rounded-lg overflow-hidden" style={{ minHeight: '400px' }}>
+          {/* AWS: Interactive Web Terminal */}
+          {setupStatus?.vmProvider === 'aws' && setupStatus?.awsPublicIp ? (
+            <WebTerminal
+              title={`ubuntu@${setupStatus.awsPublicIp}`}
+              autoConnect={true}
+              className="w-full h-full"
+            />
+          ) : setupStatus?.vmCreated && setupStatus?.orgoComputerId ? (
             currentScreenshot ? (
               <img 
                 src={currentScreenshot.startsWith('http') ? currentScreenshot : `data:image/png;base64,${currentScreenshot}`}
@@ -1665,7 +1700,21 @@ function ComputerConnectedView({
         </div>
 
         <div className="space-y-3 mb-6">
-          {setupStatus.orgoComputerUrl && (
+          {/* AWS Console Link */}
+          {setupStatus.vmProvider === 'aws' && setupStatus.awsInstanceId && (
+            <a
+              href={`https://${setupStatus.awsRegion || 'us-east-1'}.console.aws.amazon.com/ec2/home?region=${setupStatus.awsRegion || 'us-east-1'}#InstanceDetails:instanceId=${setupStatus.awsInstanceId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-sam-border bg-sam-surface hover:border-sam-accent transition-all w-full"
+            >
+              <Server className="w-4 h-4 text-sam-accent" />
+              <span className="font-mono text-sm">AWS Console</span>
+              <ExternalLink className="w-4 h-4 text-sam-text-dim ml-auto" />
+            </a>
+          )}
+          {/* Orgo Console Link */}
+          {setupStatus.vmProvider !== 'aws' && setupStatus.orgoComputerUrl && (
             <a
               href={setupStatus.orgoComputerUrl}
               target="_blank"
@@ -1844,12 +1893,12 @@ function ComputerConnectedView({
           {isDeleting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Deleting...
+              {setupStatus.vmProvider === 'aws' ? 'Terminating...' : 'Deleting...'}
             </>
           ) : (
             <>
               <Trash2 className="w-4 h-4" />
-              Delete Computer
+              {setupStatus.vmProvider === 'aws' ? 'Terminate Instance' : 'Delete Computer'}
             </>
           )}
         </button>

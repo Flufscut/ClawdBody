@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink } from 'lucide-react'
+import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server } from 'lucide-react'
 
 type VMProvider = 'orgo' | 'e2b' | 'flyio' | 'aws' | 'railway' | 'digitalocean' | 'hetzner' | 'modal'
 
@@ -21,6 +21,29 @@ interface VMOption {
 interface OrgoProject {
   id: string
   name: string
+}
+
+interface AWSRegion {
+  id: string
+  name: string
+}
+
+interface AWSInstanceType {
+  id: string
+  name: string
+  vcpu: number
+  memory: string
+  priceHour: string
+  recommended?: boolean
+  freeTier?: boolean
+}
+
+interface AWSInstance {
+  id: string
+  name: string
+  publicIp?: string
+  status: string
+  instanceType: string
 }
 
 const vmOptions: VMOption[] = [
@@ -52,11 +75,10 @@ const vmOptions: VMOption[] = [
   },
   {
     id: 'aws',
-    name: 'AWS',
-    description: 'Enterprise-grade cloud infrastructure with extensive services.',
+    name: 'AWS EC2',
+    description: 'Enterprise-grade cloud infrastructure. Pay-as-you-go pricing.',
     icon: <img src="/logos/aws.png" alt="AWS" className="w-12 h-12 object-contain" />,
-    available: false,
-    comingSoon: true,
+    available: true,
     url: 'https://aws.amazon.com',
   },
   {
@@ -116,6 +138,19 @@ export default function SelectVMPage() {
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [orgoError, setOrgoError] = useState<string | null>(null)
 
+  // AWS configuration modal state
+  const [showAWSModal, setShowAWSModal] = useState(false)
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState('')
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState('')
+  const [awsRegion, setAwsRegion] = useState('us-east-1')
+  const [awsInstanceType, setAwsInstanceType] = useState('t3.micro')
+  const [isValidatingAWS, setIsValidatingAWS] = useState(false)
+  const [awsKeyValidated, setAwsKeyValidated] = useState(false)
+  const [awsRegions, setAwsRegions] = useState<AWSRegion[]>([])
+  const [awsInstanceTypes, setAwsInstanceTypes] = useState<AWSInstanceType[]>([])
+  const [awsInstances, setAwsInstances] = useState<AWSInstance[]>([])
+  const [awsError, setAwsError] = useState<string | null>(null)
+
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/')
@@ -146,6 +181,10 @@ export default function SelectVMPage() {
       // Show Orgo configuration modal
       setShowOrgoModal(true)
       setOrgoError(null)
+    } else if (provider === 'aws') {
+      // Show AWS configuration modal
+      setShowAWSModal(true)
+      setAwsError(null)
     }
   }
 
@@ -297,6 +336,99 @@ export default function SelectVMPage() {
     setShowCreateProject(false)
     setNewProjectName('claude-brain')
     setOrgoError(null)
+  }
+
+  // AWS handlers
+  const handleValidateAWS = async () => {
+    if (!awsAccessKeyId.trim() || !awsSecretAccessKey.trim()) {
+      setAwsError('Please enter your AWS credentials')
+      return
+    }
+
+    setIsValidatingAWS(true)
+    setAwsError(null)
+
+    try {
+      const res = await fetch('/api/setup/aws/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: awsAccessKeyId.trim(),
+          secretAccessKey: awsSecretAccessKey.trim(),
+          region: awsRegion,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to validate AWS credentials')
+      }
+
+      setAwsKeyValidated(true)
+      setAwsRegions(data.regions || [])
+      setAwsInstanceTypes(data.instanceTypes || [])
+      setAwsInstances(data.instances || [])
+    } catch (e) {
+      setAwsError(e instanceof Error ? e.message : 'Failed to validate AWS credentials')
+    } finally {
+      setIsValidatingAWS(false)
+    }
+  }
+
+  const handleAWSConfirm = async () => {
+    if (!awsKeyValidated) {
+      setAwsError('Please validate your AWS credentials first')
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      // Save AWS configuration
+      await fetch('/api/setup/aws/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          region: awsRegion,
+          instanceType: awsInstanceType,
+        }),
+      })
+
+      const res = await fetch('/api/setup/select-vm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vmProvider: 'aws' }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to save VM provider selection')
+      }
+
+      setSelectedProvider('aws')
+      setShowAWSModal(false)
+      
+      // Redirect to learning sources page
+      router.push('/learning-sources')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong')
+      setIsSubmitting(false)
+    }
+  }
+
+  const closeAWSModal = () => {
+    setShowAWSModal(false)
+    setAwsAccessKeyId('')
+    setAwsSecretAccessKey('')
+    setAwsRegion('us-east-1')
+    setAwsInstanceType('t3.micro')
+    setAwsKeyValidated(false)
+    setAwsRegions([])
+    setAwsInstanceTypes([])
+    setAwsInstances([])
+    setAwsError(null)
   }
 
   return (
@@ -666,6 +798,306 @@ export default function SelectVMPage() {
                 <button
                   onClick={handleOrgoConfirm}
                   disabled={!keyValidated || isSubmitting || (orgoProjects.length > 0 && !selectedProject)}
+                  className="px-5 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Setting up...
+                    </>
+                  ) : (
+                    <>
+                      Continue
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AWS Configuration Modal */}
+      <AnimatePresence>
+        {showAWSModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={closeAWSModal}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-sam-surface border border-sam-border rounded-2xl w-full max-w-lg overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b border-sam-border sticky top-0 bg-sam-surface z-10">
+                <div className="flex items-center gap-3">
+                  <img src="/logos/aws.png" alt="AWS" className="w-8 h-8 object-contain" />
+                  <div>
+                    <h2 className="text-xl font-display font-semibold text-sam-text">Configure AWS EC2</h2>
+                    <p className="text-xs text-sam-text-dim">No manual AWS Console setup required</p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeAWSModal}
+                  className="p-2 rounded-lg hover:bg-sam-bg transition-colors text-sam-text-dim hover:text-sam-text"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-6">
+                {/* Error Display */}
+                {awsError && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="p-3 rounded-lg bg-sam-error/10 border border-sam-error/30 flex items-start gap-2"
+                  >
+                    <AlertCircle className="w-4 h-4 text-sam-error flex-shrink-0 mt-0.5" />
+                    <p className="text-sam-error text-sm">{awsError}</p>
+                  </motion.div>
+                )}
+
+                {/* Step 1: AWS Credentials */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                      <Key className="w-4 h-4 text-sam-accent" />
+                      AWS Credentials
+                      <span className="text-sam-error">*</span>
+                    </label>
+                    <a
+                      href="https://console.aws.amazon.com/iam/home#/security_credentials"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-sam-accent hover:text-sam-accent/80 flex items-center gap-1"
+                    >
+                      Get credentials <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={awsAccessKeyId}
+                      onChange={(e) => {
+                        setAwsAccessKeyId(e.target.value)
+                        setAwsKeyValidated(false)
+                      }}
+                      placeholder="Access Key (e.g., AKIAIOSFODNN7EXAMPLE)"
+                      disabled={awsKeyValidated}
+                      className={`w-full px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${
+                        awsKeyValidated
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                      }`}
+                    />
+                    <input
+                      type="password"
+                      value={awsSecretAccessKey}
+                      onChange={(e) => {
+                        setAwsSecretAccessKey(e.target.value)
+                        setAwsKeyValidated(false)
+                      }}
+                      placeholder="Secret Access Key"
+                      disabled={awsKeyValidated}
+                      className={`w-full px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${
+                        awsKeyValidated
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    {!awsKeyValidated ? (
+                      <button
+                        onClick={handleValidateAWS}
+                        disabled={isValidatingAWS || !awsAccessKeyId.trim() || !awsSecretAccessKey.trim()}
+                        className="flex-1 px-4 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isValidatingAWS ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Validating...
+                          </>
+                        ) : (
+                          'Validate Credentials'
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setAwsKeyValidated(false)
+                          setAwsAccessKeyId('')
+                          setAwsSecretAccessKey('')
+                        }}
+                        className="flex-1 px-4 py-2.5 rounded-lg border border-sam-border text-sam-text-dim hover:text-sam-text hover:border-sam-accent/50 font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                      >
+                        Change Credentials
+                      </button>
+                    )}
+                  </div>
+                  
+                  {awsKeyValidated && (
+                    <p className="text-xs text-green-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> AWS credentials validated successfully
+                    </p>
+                  )}
+                </div>
+
+                {/* Step 2: Region & Instance Type Selection (only show after credentials validated) */}
+                {awsKeyValidated && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-4"
+                  >
+                    {/* Region Selection */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-sam-accent" />
+                        Region
+                      </label>
+                      <select
+                        value={awsRegion}
+                        onChange={(e) => setAwsRegion(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text text-sm"
+                      >
+                        {(awsRegions.length > 0 ? awsRegions : [
+                          { id: 'us-east-1', name: 'US East (N. Virginia)' },
+                          { id: 'us-west-2', name: 'US West (Oregon)' },
+                          { id: 'eu-west-1', name: 'Europe (Ireland)' },
+                          { id: 'ap-southeast-1', name: 'Asia Pacific (Singapore)' },
+                        ]).map((region) => (
+                          <option key={region.id} value={region.id}>
+                            {region.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Instance Type Selection */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <Server className="w-4 h-4 text-sam-accent" />
+                        Instance Type
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(awsInstanceTypes.length > 0 ? awsInstanceTypes : [
+                          // Free Tier eligible (as of 2026)
+                          { id: 't3.micro', name: 't3.micro', vcpu: 2, memory: '1 GB', priceHour: 'Free Tier', freeTier: true },
+                          { id: 't3.small', name: 't3.small', vcpu: 2, memory: '2 GB', priceHour: 'Free Tier', freeTier: true },
+                          { id: 'c7i-flex.large', name: 'c7i-flex.large', vcpu: 2, memory: '4 GB', priceHour: 'Free Tier', freeTier: true },
+                          { id: 'm7i-flex.large', name: 'm7i-flex.large', vcpu: 2, memory: '8 GB', priceHour: 'Free Tier', freeTier: true, recommended: true },
+                          // Paid options
+                          { id: 't3.medium', name: 't3.medium', vcpu: 2, memory: '4 GB', priceHour: '~$0.04/hr' },
+                          { id: 't3.large', name: 't3.large', vcpu: 2, memory: '8 GB', priceHour: '~$0.08/hr' },
+                          { id: 't3.xlarge', name: 't3.xlarge', vcpu: 4, memory: '16 GB', priceHour: '~$0.17/hr' },
+                        ]).map((type) => (
+                          <button
+                            key={type.id}
+                            onClick={() => setAwsInstanceType(type.id)}
+                            className={`p-3 rounded-lg border text-left transition-all ${
+                              awsInstanceType === type.id
+                                ? 'border-sam-accent bg-sam-accent/10'
+                                : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-sam-text font-mono text-sm">{type.name}</span>
+                              {type.freeTier && (
+                                <span className="text-[10px] font-mono text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded">
+                                  Free Tier
+                                </span>
+                              )}
+                              {type.recommended && !type.freeTier && (
+                                <span className="text-[10px] font-mono text-sam-accent bg-sam-accent/10 px-1.5 py-0.5 rounded">
+                                  Recommended
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-sam-text-dim">
+                              {type.vcpu} vCPU · {type.memory}
+                            </div>
+                            <div className={`text-xs mt-1 ${type.freeTier ? 'text-green-400' : 'text-sam-accent'}`}>
+                              {type.priceHour}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Existing Instances */}
+                    {awsInstances.length > 0 && (
+                      <div className="space-y-3">
+                        <label className="text-sm font-medium text-sam-text">
+                          Existing Clawdbot Instances
+                        </label>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {awsInstances.map((instance) => (
+                            <div
+                              key={instance.id}
+                              className="p-3 rounded-lg border border-sam-border bg-sam-bg/50"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-sam-text font-medium text-sm">{instance.name}</span>
+                                <span className={`text-xs font-mono px-2 py-0.5 rounded ${
+                                  instance.status === 'running' 
+                                    ? 'bg-green-500/10 text-green-400' 
+                                    : 'bg-yellow-500/10 text-yellow-400'
+                                }`}>
+                                  {instance.status}
+                                </span>
+                              </div>
+                              <div className="text-xs text-sam-text-dim mt-1">
+                                {instance.instanceType} · {instance.publicIp || 'No public IP'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Permissions Notice */}
+                    <div className="p-3 rounded-lg bg-sam-bg border border-sam-border">
+                      <p className="text-xs text-sam-text-dim">
+                        <strong className="text-sam-text">Required AWS permissions:</strong> EC2 (create/manage instances), 
+                        VPC (security groups), SSM (optional, for remote commands). 
+                        <a 
+                          href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_create.html" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sam-accent hover:underline ml-1"
+                        >
+                          Learn more
+                        </a>
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-sam-border flex justify-end gap-3 sticky bottom-0 bg-sam-surface">
+                <button
+                  onClick={closeAWSModal}
+                  className="px-5 py-2.5 rounded-lg border border-sam-border text-sam-text-dim hover:text-sam-text hover:border-sam-accent/50 font-medium text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAWSConfirm}
+                  disabled={!awsKeyValidated || isSubmitting}
                   className="px-5 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isSubmitting ? (

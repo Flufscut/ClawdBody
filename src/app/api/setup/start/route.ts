@@ -3,8 +3,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/app/api/auth/[...nextauth]/route'
 import { prisma } from '@/lib/prisma'
 import { OrgoClient, generateComputerName } from '@/lib/orgo'
+import { AWSClient, generateInstanceName } from '@/lib/aws'
 import { GitHubClient } from '@/lib/github'
 import { VMSetup } from '@/lib/vm-setup'
+import { AWSVMSetup } from '@/lib/aws-vm-setup'
+// Import type from Prisma client for type checking
 import type { SetupState } from '@prisma/client'
 
 export async function POST(request: NextRequest) {
@@ -21,21 +24,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Claude API key is required' }, { status: 400 })
     }
 
-    // Get existing setup state to retrieve user's Orgo API key
+    // Get existing setup state to retrieve user's provider config
     let setupState = await prisma.setupState.findUnique({
       where: { userId: session.user.id },
     })
 
-    // Use user's Orgo API key from setup state
-    const orgoApiKey = setupState?.orgoApiKey
-    if (!orgoApiKey) {
+    const vmProvider = setupState?.vmProvider || 'orgo'
+
+    // Validate provider-specific configuration
+    if (vmProvider === 'orgo') {
+      const orgoApiKey = setupState?.orgoApiKey
+      if (!orgoApiKey) {
+        return NextResponse.json({ 
+          error: 'Orgo API key not configured. Please go back and configure your Orgo API key.' 
+        }, { status: 400 })
+      }
+    } else if (vmProvider === 'aws') {
+      // Type assertion to access AWS fields (TypeScript may have stale types cached)
+      const awsState = setupState as SetupState & { awsAccessKeyId?: string; awsSecretAccessKey?: string }
+      const awsAccessKeyId = awsState?.awsAccessKeyId
+      const awsSecretAccessKey = awsState?.awsSecretAccessKey
+      if (!awsAccessKeyId || !awsSecretAccessKey) {
+        return NextResponse.json({ 
+          error: 'AWS credentials not configured. Please go back and configure your AWS credentials.' 
+        }, { status: 400 })
+      }
+    } else {
       return NextResponse.json({ 
-        error: 'Orgo API key not configured. Please go back and configure your Orgo API key.' 
+        error: `Unsupported VM provider: ${vmProvider}` 
       }, { status: 400 })
     }
-
-    // Use user's selected project name or default
-    const projectName = setupState?.orgoProjectName || 'claude-brain'
 
     if (!setupState) {
       setupState = await prisma.setupState.create({
@@ -57,17 +75,48 @@ export async function POST(request: NextRequest) {
           repoCreated: false,
           repoCloned: false,
           gitSyncConfigured: false,
+          clawdbotInstalled: false,
+          telegramConfigured: false,
+          gatewayStarted: false,
         },
       })
     }
 
-    // Start async setup process
-    runSetupProcess(session.user.id, claudeApiKey, orgoApiKey, projectName, telegramBotToken, telegramUserId).catch(console.error)
+    // Start async setup process based on provider
+    if (vmProvider === 'aws') {
+      // Type assertion to access AWS fields
+      const awsState = setupState as SetupState & { 
+        awsAccessKeyId?: string
+        awsSecretAccessKey?: string
+        awsRegion?: string
+        awsInstanceType?: string 
+      }
+      runAWSSetupProcess(
+        session.user.id,
+        claudeApiKey,
+        awsState.awsAccessKeyId!,
+        awsState.awsSecretAccessKey!,
+        awsState.awsRegion || 'us-east-1',
+        awsState.awsInstanceType || 't3.micro',
+        telegramBotToken,
+        telegramUserId
+      ).catch(console.error)
+    } else {
+      runSetupProcess(
+        session.user.id,
+        claudeApiKey,
+        setupState.orgoApiKey!,
+        setupState.orgoProjectName || 'claude-brain',
+        telegramBotToken,
+        telegramUserId
+      ).catch(console.error)
+    }
 
     return NextResponse.json({ 
       success: true, 
       message: 'Setup started',
-      setupId: setupState.id 
+      setupId: setupState.id,
+      provider: vmProvider,
     })
 
   } catch (error) {
@@ -504,6 +553,267 @@ These repositories are cloned in the \`~/repositories/\` directory on the VM and
   } catch (error) {
     console.error('Error cloning pending GitHub repositories:', error)
     // Don't throw - this shouldn't block setup completion
+  }
+}
+
+/**
+ * AWS EC2 Setup Process
+ */
+async function runAWSSetupProcess(
+  userId: string,
+  claudeApiKey: string,
+  awsAccessKeyId: string,
+  awsSecretAccessKey: string,
+  awsRegion: string,
+  awsInstanceType: string,
+  telegramBotToken?: string,
+  telegramUserId?: string
+) {
+  const updateStatus = async (updates: Partial<{
+    status: string
+    vmCreated: boolean
+    repoCreated: boolean
+    repoCloned: boolean
+    gitSyncConfigured: boolean
+    clawdbotInstalled: boolean
+    telegramConfigured: boolean
+    gatewayStarted: boolean
+    awsInstanceId: string
+    awsInstanceName: string
+    awsPublicIp: string
+    awsPrivateKey: string
+    vaultRepoName: string
+    vaultRepoUrl: string
+    vmStatus: string
+    errorMessage: string
+  }>) => {
+    await prisma.setupState.update({
+      where: { userId },
+      data: updates,
+    })
+  }
+
+  let awsVMSetup: AWSVMSetup | null = null
+
+  try {
+    // Get setup state
+    const setupState = await prisma.setupState.findUnique({
+      where: { userId },
+    })
+
+    // Get GitHub access token
+    const account = await prisma.account.findFirst({
+      where: { userId, provider: 'github' },
+    })
+
+    if (!account?.access_token) {
+      throw new Error('GitHub account not connected')
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } })
+    const githubClient = new GitHubClient(account.access_token)
+    const awsClient = new AWSClient({
+      accessKeyId: awsAccessKeyId,
+      secretAccessKey: awsSecretAccessKey,
+      region: awsRegion,
+    })
+
+    // 1. Create AWS EC2 Instance
+    console.log(`Creating AWS EC2 instance in region ${awsRegion}...`)
+    await updateStatus({ status: 'provisioning', vmStatus: 'creating' })
+
+    const instanceName = generateInstanceName()
+    const { instance, privateKey } = await awsClient.createInstance({
+      name: instanceName,
+      instanceType: awsInstanceType,
+      region: awsRegion,
+    })
+
+    await updateStatus({
+      awsInstanceId: instance.id,
+      awsInstanceName: instance.name,
+      awsPublicIp: instance.publicIp,
+      awsPrivateKey: privateKey,
+      vmStatus: 'starting',
+    })
+
+    // Wait for instance to be running
+    console.log('Waiting for EC2 instance to be running...')
+    await new Promise(resolve => setTimeout(resolve, 30000)) // Wait 30 seconds for instance to fully boot
+
+    // Get updated instance info with public IP
+    const updatedInstance = await awsClient.getInstance(instance.id)
+    await updateStatus({
+      awsPublicIp: updatedInstance.publicIp,
+      vmCreated: true,
+      vmStatus: 'running',
+    })
+
+    console.log(`EC2 instance ${instance.id} is running at ${updatedInstance.publicIp}`)
+
+    // 2. Use existing GitHub vault repository or create new one
+    const githubUser = await githubClient.getUser()
+    let vaultRepoName: string | undefined
+    let vaultRepoUrl: string | undefined
+    let vaultSshUrl: string | undefined
+
+    if (setupState?.vaultRepoName && setupState?.vaultRepoUrl) {
+      console.log(`Using existing vault repository: ${setupState.vaultRepoName}`)
+      
+      const repoExists = await githubClient.repoExists(setupState.vaultRepoName)
+      if (repoExists) {
+        vaultRepoName = setupState.vaultRepoName
+        vaultRepoUrl = setupState.vaultRepoUrl
+        vaultSshUrl = `git@github.com:${githubUser.login}/${vaultRepoName}.git`
+        
+        await updateStatus({
+          repoCreated: true,
+          vaultRepoName,
+          vaultRepoUrl,
+        })
+      }
+    }
+
+    if (!vaultRepoName) {
+      console.log('Creating new vault repository...')
+      await updateStatus({ status: 'creating_repo' })
+      
+      const vaultRepo = await githubClient.createVaultRepo(`samantha-vault-${Date.now().toString(36)}`)
+      vaultRepoName = vaultRepo.name
+      vaultRepoUrl = vaultRepo.url
+      vaultSshUrl = vaultRepo.sshUrl
+      
+      await updateStatus({
+        repoCreated: true,
+        vaultRepoName,
+        vaultRepoUrl,
+      })
+    }
+
+    // 3. Configure VM
+    console.log('Configuring EC2 instance...')
+    await updateStatus({ status: 'configuring_vm' })
+
+    awsVMSetup = new AWSVMSetup(
+      awsClient,
+      instance.id,
+      privateKey,
+      updatedInstance.publicIp,
+      (progress) => {
+        console.log(`[AWS VM Setup] ${progress.step}: ${progress.message}`)
+      }
+    )
+
+    // Install Python and essential tools
+    console.log('Installing Python and essential tools...')
+    const pythonSuccess = await awsVMSetup.installPython()
+    if (!pythonSuccess) {
+      throw new Error('Failed to install Python and essential tools on VM')
+    }
+
+    // Install Anthropic SDKs
+    console.log('Installing Anthropic SDKs...')
+    await awsVMSetup.installAnthropicSDK()
+
+    // Generate SSH key on VM
+    console.log('Generating SSH key for GitHub access...')
+    const { publicKey, success: sshKeySuccess } = await awsVMSetup.generateSSHKey()
+    if (!sshKeySuccess || !publicKey) {
+      throw new Error('Failed to generate SSH key on VM')
+    }
+
+    if (!vaultRepoName) {
+      throw new Error('Vault repository name is not set')
+    }
+
+    // Add deploy key to GitHub repo
+    await githubClient.createDeployKey(vaultRepoName, publicKey)
+
+    // Configure git and clone repo
+    await awsVMSetup.configureGit(githubUser.login, githubUser.email || `${githubUser.login}@users.noreply.github.com`)
+
+    if (!vaultSshUrl) {
+      throw new Error('Failed to get vault SSH URL')
+    }
+
+    const cloneSuccess = await awsVMSetup.cloneVaultRepo(vaultSshUrl)
+    if (!cloneSuccess) {
+      throw new Error('Failed to clone vault repository to VM')
+    }
+    await updateStatus({ repoCloned: true })
+
+    // Set up Git sync
+    await awsVMSetup.setupGitSync()
+    await updateStatus({ gitSyncConfigured: true })
+
+    // Install Clawdbot
+    console.log('Installing Clawdbot...')
+    const clawdbotResult = await awsVMSetup.installClawdbot()
+    if (!clawdbotResult.success) {
+      throw new Error('Failed to install Clawdbot')
+    }
+    await updateStatus({ clawdbotInstalled: true })
+
+    // Link vault to Clawdbot knowledge directory
+    console.log('Linking vault to Clawdbot knowledge directory...')
+    await awsVMSetup.linkVaultToKnowledge()
+
+    // Configure Clawdbot with Telegram if token is provided
+    const finalTelegramToken = telegramBotToken || process.env.TELEGRAM_BOT_TOKEN
+    const finalTelegramUserId = telegramUserId || process.env.TELEGRAM_USER_ID
+
+    if (finalTelegramToken) {
+      console.log('Configuring Clawdbot with Telegram...')
+      const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
+        claudeApiKey,
+        telegramBotToken: finalTelegramToken,
+        telegramUserId: finalTelegramUserId,
+        clawdbotVersion: clawdbotResult.version,
+        heartbeatIntervalMinutes: 30,
+        userId,
+        apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
+      })
+      await updateStatus({ telegramConfigured: telegramSuccess })
+
+      if (telegramSuccess) {
+        console.log('Starting Clawdbot gateway...')
+        const gatewaySuccess = await awsVMSetup.startClawdbotGateway(claudeApiKey, finalTelegramToken)
+        await updateStatus({ gatewayStarted: gatewaySuccess })
+      }
+    } else {
+      await awsVMSetup.storeClaudeKey(claudeApiKey)
+    }
+
+    // Setup complete!
+    await updateStatus({ status: 'ready' })
+    console.log('AWS EC2 setup complete!')
+
+  } catch (error: any) {
+    console.error('AWS setup process error:', error)
+    
+    // Check for Free Tier restriction error
+    const errorMessage = error?.message || error?.Error?.Message || String(error)
+    const isFreeTierError = errorMessage.includes('not eligible for Free Tier') || 
+                           errorMessage.includes('Free Tier') ||
+                           (error?.Code === 'InvalidParameterCombination' && errorMessage.includes('Free Tier'))
+    
+    if (isFreeTierError) {
+      // This is a billing/payment issue, not a technical error
+      await updateStatus({
+        status: 'requires_payment',
+        errorMessage: `BILLING_REQUIRED:${awsInstanceType}`, // Pass the instance type for the UI
+      })
+    } else {
+      await updateStatus({
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+      })
+    }
+  } finally {
+    // Cleanup SSH connection
+    if (awsVMSetup) {
+      awsVMSetup.cleanup()
+    }
   }
 }
 

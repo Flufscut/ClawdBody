@@ -36,8 +36,17 @@ interface SetupStatus {
   clawdbotInstalled: boolean
   telegramConfigured: boolean
   gatewayStarted: boolean
+  vmProvider?: string
+  // Orgo-specific fields
   orgoComputerId?: string
   orgoComputerUrl?: string
+  // AWS-specific fields
+  awsInstanceId?: string
+  awsInstanceName?: string
+  awsPublicIp?: string
+  awsRegion?: string
+  awsConsoleUrl?: string
+  // Common fields
   vaultRepoUrl?: string
   errorMessage?: string
 }
@@ -51,9 +60,15 @@ export function SetupWizard() {
   const [isProgressCollapsed, setIsProgressCollapsed] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   
-  // Poll for screenshots if VM is created
+  // Check if we have a valid VM identifier for screenshots
+  const hasVmIdentifier = setupStatus?.vmCreated && (
+    setupStatus?.orgoComputerId || setupStatus?.awsInstanceId
+  )
+  
+  // Poll for screenshots if VM is created (Orgo only - AWS doesn't support screenshots)
   useEffect(() => {
-    if (!setupStatus?.orgoComputerId || !setupStatus?.vmCreated) {
+    // Only poll screenshots for Orgo VMs (AWS EC2 doesn't have built-in screenshot API)
+    if (!setupStatus?.orgoComputerId || !setupStatus?.vmCreated || setupStatus?.vmProvider === 'aws') {
       return
     }
 
@@ -113,7 +128,10 @@ export function SetupWizard() {
           setSetupStatus(status)
           
           // Update step based on status - check status field first, then boolean flags
-          if (status.errorMessage) {
+          if (status.status === 'requires_payment') {
+            // Don't set error for billing notice - it's handled separately in the UI
+            setCurrentStep('provisioning')
+          } else if (status.errorMessage) {
             setError(status.errorMessage)
             // Don't change step, just show error
           } else if (status.status === 'ready') {
@@ -156,7 +174,10 @@ export function SetupWizard() {
             setSetupStatus(status)
             
             // Update step based on status - check status field first, then boolean flags
-            if (status.errorMessage) {
+            if (status.status === 'requires_payment') {
+              // Don't set error for billing notice - it's handled separately in the UI
+              setCurrentStep('provisioning')
+            } else if (status.errorMessage) {
               setError(status.errorMessage)
               // Don't change step, just show error
             } else if (status.status === 'ready') {
@@ -287,7 +308,59 @@ export function SetupWizard() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-6"
             >
-              {error && (
+              {/* Billing Notice for Free Tier accounts */}
+              {setupStatus?.status === 'requires_payment' && setupStatus?.errorMessage?.startsWith('BILLING_REQUIRED:') && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="p-5 rounded-xl bg-amber-500/10 border border-amber-500/30"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                      <AlertCircle className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-amber-400 font-medium mb-2">Payment Method Required</h3>
+                      <p className="text-sam-text-dim text-sm mb-3">
+                        The instance type <code className="text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded font-mono text-xs">{setupStatus.errorMessage.split(':')[1]}</code> requires a payment method on your AWS account.
+                      </p>
+                      <p className="text-sam-text-dim text-sm mb-4">
+                        You can either:
+                      </p>
+                      <ul className="text-sm text-sam-text-dim space-y-2 mb-4">
+                        <li className="flex items-start gap-2">
+                          <span className="text-amber-400">1.</span>
+                          <span>Add a payment method to your AWS account to use paid instance types</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-amber-400">2.</span>
+                          <span>Go back and select a <strong className="text-green-400">Free Tier</strong> instance type like m7i-flex.large (8 GB)</span>
+                        </li>
+                      </ul>
+                      <div className="flex flex-wrap gap-3">
+                        <a
+                          href="https://console.aws.amazon.com/billing/home#/paymentmethods"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors text-sm font-medium"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          Add Payment Method
+                        </a>
+                        <button
+                          onClick={() => window.location.href = '/select-vm'}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-sam-border text-sam-text-dim hover:text-sam-text hover:border-sam-accent/50 transition-colors text-sm font-medium"
+                        >
+                          ← Change Instance Type
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+              
+              {/* Regular error display */}
+              {error && setupStatus?.status !== 'requires_payment' && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -304,10 +377,27 @@ export function SetupWizard() {
                 <div className="rounded-2xl border border-sam-border bg-sam-surface/50 backdrop-blur overflow-hidden">
                   <div className="px-6 py-4 border-b border-sam-border bg-sam-surface/50 flex items-center justify-between">
                     <div>
-                      <h3 className="text-lg font-display font-bold text-sam-text">VM Screen</h3>
-                      <p className="text-xs text-sam-text-dim font-mono">Live view</p>
+                      <h3 className="text-lg font-display font-bold text-sam-text">
+                        {setupStatus?.vmProvider === 'aws' ? 'EC2 Instance' : 'VM Screen'}
+                      </h3>
+                      <p className="text-xs text-sam-text-dim font-mono">
+                        {setupStatus?.vmProvider === 'aws' 
+                          ? (setupStatus?.awsPublicIp || 'Provisioning...')
+                          : 'Live view'}
+                      </p>
                     </div>
-                    {setupStatus?.orgoComputerUrl && (
+                    {setupStatus?.vmProvider === 'aws' && setupStatus?.awsConsoleUrl && (
+                      <a
+                        href={setupStatus.awsConsoleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-sam-accent hover:underline flex items-center gap-1"
+                      >
+                        Open in AWS Console
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    {setupStatus?.vmProvider !== 'aws' && setupStatus?.orgoComputerUrl && (
                       <a
                         href={setupStatus.orgoComputerUrl}
                         target="_blank"
@@ -320,18 +410,43 @@ export function SetupWizard() {
                     )}
                   </div>
                   <div className="aspect-video bg-sam-bg flex items-center justify-center relative">
-                    {setupStatus?.vmCreated && setupStatus?.orgoComputerId ? (
-                        currentScreenshot ? (
-                          <img 
-                            src={currentScreenshot.startsWith('http') ? currentScreenshot : `data:image/png;base64,${currentScreenshot}`}
-                            alt="VM Screen"
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              console.error('Failed to load screenshot image')
-                              setCurrentScreenshot(null)
-                            }}
-                          />
+                    {setupStatus?.vmProvider === 'aws' ? (
+                      // AWS EC2 doesn't have built-in screenshot API
+                      <div className="flex flex-col items-center gap-4 text-sam-text-dim p-8">
+                        {setupStatus?.vmCreated ? (
+                          <>
+                            <div className="w-16 h-16 rounded-full bg-sam-accent/10 flex items-center justify-center">
+                              <CheckCircle2 className="w-8 h-8 text-sam-accent" />
+                            </div>
+                            <div className="text-center">
+                              <p className="text-sam-text font-medium mb-1">EC2 Instance Running</p>
+                              <p className="text-xs text-sam-text-dim font-mono">{setupStatus?.awsInstanceName}</p>
+                              {setupStatus?.awsPublicIp && (
+                                <p className="text-xs text-sam-accent font-mono mt-1">
+                                  IP: {setupStatus.awsPublicIp}
+                                </p>
+                              )}
+                            </div>
+                          </>
                         ) : (
+                          <>
+                            <Loader2 className="w-8 h-8 animate-spin text-sam-accent" />
+                            <p className="text-sm font-mono">Creating EC2 instance...</p>
+                          </>
+                        )}
+                      </div>
+                    ) : setupStatus?.vmCreated && setupStatus?.orgoComputerId ? (
+                      currentScreenshot ? (
+                        <img 
+                          src={currentScreenshot.startsWith('http') ? currentScreenshot : `data:image/png;base64,${currentScreenshot}`}
+                          alt="VM Screen"
+                          className="w-full h-full object-contain"
+                          onError={(e) => {
+                            console.error('Failed to load screenshot image')
+                            setCurrentScreenshot(null)
+                          }}
+                        />
+                      ) : (
                         <div className="flex flex-col items-center gap-3 text-sam-text-dim">
                           <Loader2 className="w-8 h-8 animate-spin text-sam-accent" />
                           <p className="text-sm font-mono">Loading VM screen...</p>
@@ -369,8 +484,11 @@ export function SetupWizard() {
                     <div className="p-6 overflow-y-auto max-h-[calc(100vh-400px)]">
                       <div className="space-y-4">
                         <SetupTaskItem
-                          label="Creating Orgo VM"
-                          sublabel="Project: claude-code"
+                          label={setupStatus?.vmProvider === 'aws' ? 'Creating AWS EC2 Instance' : 'Creating Orgo VM'}
+                          sublabel={setupStatus?.vmProvider === 'aws' 
+                            ? `Region: ${setupStatus?.awsRegion || 'us-east-1'}`
+                            : 'Project: claude-code'
+                          }
                           status={setupStatus?.vmCreated ? 'complete' : currentStep === 'provisioning' ? 'running' : 'pending'}
                         />
                         <SetupTaskItem
@@ -520,7 +638,20 @@ export function SetupWizard() {
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4 max-w-lg mx-auto">
-                  {setupStatus?.orgoComputerUrl && (
+                  {/* VM Link - provider specific */}
+                  {setupStatus?.vmProvider === 'aws' && setupStatus?.awsConsoleUrl && (
+                    <a
+                      href={setupStatus.awsConsoleUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-6 py-4 rounded-xl border border-sam-border bg-sam-surface hover:border-sam-accent transition-all"
+                    >
+                      <Server className="w-5 h-5 text-sam-accent" />
+                      <span className="font-mono text-sm">AWS Console</span>
+                      <ExternalLink className="w-4 h-4 text-sam-text-dim" />
+                    </a>
+                  )}
+                  {setupStatus?.vmProvider !== 'aws' && setupStatus?.orgoComputerUrl && (
                     <a
                       href={setupStatus.orgoComputerUrl}
                       target="_blank"
@@ -676,8 +807,12 @@ function SetupTaskItem({
 }
 
 function getTerminalText(step: SetupStep, status: SetupStatus | null): string {
+  const isAWS = status?.vmProvider === 'aws'
+  
   if (step === 'provisioning') {
-    return 'orgo compute create --project claude-code --os linux'
+    return isAWS 
+      ? `aws ec2 run-instances --region ${status?.awsRegion || 'us-east-1'} --instance-type t3.micro`
+      : 'orgo compute create --project claude-code --os linux'
   }
   if (step === 'creating_repo') {
     return 'gh repo create samantha-vault --private --template'
@@ -690,7 +825,9 @@ function getTerminalText(step: SetupStep, status: SetupStatus | null): string {
     if (status?.repoCloned) return 'crontab -e # setup git sync'
     if (status?.repoCreated) return 'git clone git@github.com:user/samantha-vault.git ~/vault'
     if (status?.vmCreated) return 'sudo apt-get install -y python3 git openssh-client'
-    return 'Waiting for VM to be ready...'
+    return isAWS 
+      ? 'Connecting to EC2 instance via SSH...'
+      : 'Waiting for VM to be ready...'
   }
   return 'echo "Setup complete!"'
 }
