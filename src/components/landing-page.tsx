@@ -2,7 +2,7 @@
 
 import { signIn } from 'next-auth/react'
 import { motion } from 'framer-motion'
-import { Github, Mail, Calendar, HardDrive, MessageSquare, MoreHorizontal } from 'lucide-react'
+import { Github, Mail, Calendar, HardDrive, MessageSquare, MoreHorizontal, ExternalLink } from 'lucide-react'
 
 export function LandingPage() {
   const steps = [
@@ -25,6 +25,23 @@ export function LandingPage() {
       <div className="landing-stars" />
 
       <div className="relative z-10 container mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24 lg:py-32">
+        {/* GitHub Link - Top Right */}
+        <motion.a
+          href="https://github.com/Prakshal-Jain/ClawdBody"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="absolute top-6 right-6 sm:top-8 sm:right-8 flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-white/20 transition-all group"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.2, duration: 0.6 }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <Github className="w-5 h-5 text-gray-300 group-hover:text-white transition-colors" />
+          <span className="text-sm text-gray-300 group-hover:text-white transition-colors hidden sm:inline">GitHub</span>
+          <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-gray-300 transition-colors hidden sm:inline" />
+        </motion.a>
+
         {/* Hero Section */}
         <div className="text-center max-w-4xl mx-auto">
           <motion.div
