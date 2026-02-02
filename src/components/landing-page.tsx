@@ -26,8 +26,8 @@ const GoogleIcon = ({ className }: { className?: string }) => (
 export function LandingPage() {
   const steps = [
     { number: '1', text: 'Sign in with Google' },
-    { number: '2', text: 'Get a cloud VM' },
-    { number: '3', text: 'AI runs 24/7 inferring & executing tasks' },
+    { number: '2', text: 'Pick a cloud provider & connect your apps' },
+    { number: '3', text: 'Your AI agent runs 24/7 on autopilot' },
   ]
 
   const GmailIcon = () => (
@@ -91,23 +91,23 @@ export function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, duration: 0.6 }}
           >
-            1-click AI workflow deployment on cloud VMs
+            Deploy 1-click AI workflows to automate life & business
           </motion.h1>
 
           <motion.p
-            className="text-lg sm:text-xl text-gray-400 mb-10 max-w-2xl mx-auto"
+            className="text-lg sm:text-xl text-gray-400 mb-8 max-w-2xl mx-auto"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
           >
-            Persistent memory. Safe personal data. Works while you sleep.
+            Cloud Computers. Safe personal data. Works while you sleep.
           </motion.p>
 
           <motion.div
-            className="inline-block bg-gradient-to-r from-rose-500 to-teal-400 rounded-full p-[2px] shadow-lg shadow-rose-500/30 hover:shadow-rose-500/50 transition-all duration-300"
+            className="inline-block bg-gradient-to-r from-rose-500 to-teal-400 rounded-full p-[2px] shadow-lg shadow-rose-500/30 hover:shadow-rose-500/50 transition-all duration-300 mb-10"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.6 }}
+            transition={{ delay: 0.35, duration: 0.6 }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
@@ -118,6 +118,30 @@ export function LandingPage() {
               <GoogleIcon className="w-5 h-5" />
               Sign in with Google
             </button>
+          </motion.div>
+
+          {/* What can it do section */}
+          <motion.div
+            className="flex flex-wrap justify-center gap-3"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4, duration: 0.6 }}
+          >
+            {[
+              '📧 Manage emails & inbox',
+              '📅 Schedule & coordinate',
+              '🔍 Research & summarize',
+              '📊 Automate business ops',
+              '🔗 Connect your apps',
+              '🤖 Run custom workflows'
+            ].map((item, i) => (
+              <span 
+                key={i} 
+                className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-sm text-gray-300"
+              >
+                {item}
+              </span>
+            ))}
           </motion.div>
 
           {/* Twitter Launch Posts */}
@@ -237,13 +261,82 @@ export function LandingPage() {
           charSet="utf-8"
         />
 
-        {/* How it works */}
+        {/* Why ClawdBody explanation */}
         <motion.div
-          className="mt-20 sm:mt-28"
+          className="mt-20 sm:mt-28 max-w-5xl mx-auto"
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6, duration: 0.6 }}
         >
+          <h2 className="text-2xl sm:text-3xl font-bold text-white text-center mb-4">
+            One platform. Endless automation.
+          </h2>
+          <p className="text-gray-400 text-center mb-10 max-w-2xl mx-auto">
+            Whether you're automating personal tasks or scaling business operations, ClawdBody handles it all.
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-12">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-center">
+              <div className="text-3xl mb-3">⚡</div>
+              <h3 className="text-base font-semibold text-white mb-2">1-Click Deploy</h3>
+              <p className="text-gray-400 text-sm">No terminal, no DevOps. Your AI agent is live in seconds.</p>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-center">
+              <div className="text-3xl mb-3">🌙</div>
+              <h3 className="text-base font-semibold text-white mb-2">Runs 24/7</h3>
+              <p className="text-gray-400 text-sm">Your AI works around the clock on its own cloud computer.</p>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-center">
+              <div className="text-3xl mb-3">🧠</div>
+              <h3 className="text-base font-semibold text-white mb-2">Persistent Memory</h3>
+              <p className="text-gray-400 text-sm">Learns your preferences and context. Gets smarter over time.</p>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-center">
+              <div className="text-3xl mb-3">🔐</div>
+              <h3 className="text-base font-semibold text-white mb-2">Your Cloud, Your Data</h3>
+              <p className="text-gray-400 text-sm">Runs on your own instance. We never see your personal data.</p>
+            </div>
+          </div>
+
+          {/* Use cases */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-gradient-to-br from-rose-500/10 to-transparent border border-rose-500/20 rounded-2xl p-6">
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <span className="text-xl">👤</span> For Individuals
+              </h3>
+              <ul className="space-y-2 text-gray-300 text-sm">
+                <li className="flex items-start gap-2"><span className="text-rose-400">→</span> Auto-respond to emails & schedule meetings</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400">→</span> Research topics & summarize documents</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400">→</span> Manage files, reminders & daily tasks</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400">→</span> Work on projects even while you sleep</li>
+              </ul>
+            </div>
+            
+            <div className="bg-gradient-to-br from-teal-500/10 to-transparent border border-teal-500/20 rounded-2xl p-6">
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <span className="text-xl">🏢</span> For Businesses
+              </h3>
+              <ul className="space-y-2 text-gray-300 text-sm">
+                <li className="flex items-start gap-2"><span className="text-teal-400">→</span> Automate customer support & lead follow-ups</li>
+                <li className="flex items-start gap-2"><span className="text-teal-400">→</span> Run data pipelines & generate reports</li>
+                <li className="flex items-start gap-2"><span className="text-teal-400">→</span> Deploy multiple agents that work together</li>
+                <li className="flex items-start gap-2"><span className="text-teal-400">→</span> Scale operations without scaling headcount</li>
+              </ul>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* How it works */}
+        <motion.div
+          className="mt-12 sm:mt-16"
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.7, duration: 0.6 }}
+        >
+          <p className="text-gray-500 mb-6 text-sm uppercase tracking-wider text-center">Get started in 3 steps</p>
           <div className="flex flex-col sm:flex-row justify-center items-center gap-6 sm:gap-12">
             {steps.map((step, index) => (
               <motion.div
@@ -251,7 +344,7 @@ export function LandingPage() {
                 className="flex items-center gap-4"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.7 + index * 0.1, duration: 0.4 }}
+                transition={{ delay: 0.8 + index * 0.1, duration: 0.4 }}
               >
                 <div className="w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-teal-400 font-semibold">
                   {step.number}
@@ -298,7 +391,7 @@ export function LandingPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.3, duration: 0.6 }}
         >
-          <p className="text-gray-500 mb-6 text-sm uppercase tracking-wider">Runs on</p>
+          <p className="text-gray-500 mb-6 text-sm uppercase tracking-wider">Runs securely on cloud providers</p>
           <div className="flex justify-center items-center gap-8 sm:gap-12">
             <motion.a
               href="https://orgo.ai"
