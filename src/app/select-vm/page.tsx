@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, Sparkles, PenTool, User, Lightbulb } from 'lucide-react'
+import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, Sparkles, PenTool, User, Lightbulb, Share2, Link2, Check } from 'lucide-react'
 import type { Template, TemplateIdea } from '@/lib/templates'
 import { TEMPLATE_IDEAS } from '@/lib/templates'
 
@@ -261,7 +261,7 @@ export default function SelectVMPage() {
   const [deploymentProgress, setDeploymentProgress] = useState<string | null>(null)
   const [isLoadingProjectsForTemplate, setIsLoadingProjectsForTemplate] = useState(false)
   const [selectedTemplateProject, setSelectedTemplateProject] = useState<OrgoProject | null>(null)
-  
+
   // Template success modal state
   const [showTemplateSuccessModal, setShowTemplateSuccessModal] = useState(false)
   const [deployedVM, setDeployedVM] = useState<any>(null)
@@ -281,6 +281,10 @@ export default function SelectVMPage() {
   const [createTemplateError, setCreateTemplateError] = useState<string | null>(null)
   const [templateIdeas] = useState<TemplateIdea[]>(TEMPLATE_IDEAS)
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null)
+  const [duplicateTemplate, setDuplicateTemplate] = useState<Template | null>(null)
+  const [copiedTemplateId, setCopiedTemplateId] = useState<string | null>(null)
+  const [showTemplateShareModal, setShowTemplateShareModal] = useState(false)
+  const [templateToShare, setTemplateToShare] = useState<Template | null>(null)
 
   // Load user's VMs, credentials, and templates
   useEffect(() => {
@@ -327,7 +331,7 @@ export default function SelectVMPage() {
     setTemplateError(null)
     setSelectedTemplateProject(orgoProjects[0] || null) // Set default project
     setShowTemplateDeployModal(true)
-    
+
     // If we already have Orgo API key stored, fetch projects
     if (credentials?.hasOrgoApiKey) {
       setKeyValidated(true)
@@ -361,7 +365,7 @@ export default function SelectVMPage() {
 
   const handleDeployTemplate = async () => {
     if (!selectedTemplate) return
-    
+
     if (!templateAgentName.trim()) {
       setTemplateError('Please enter an agent name')
       return
@@ -406,10 +410,10 @@ export default function SelectVMPage() {
       setDeployedVM(data.vm)
       setPostSetupData(data.postSetup || null)
       setShowTemplateSuccessModal(true)
-      
+
       // Refresh VMs list
       await loadVMs()
-      
+
     } catch (e) {
       setTemplateError(e instanceof Error ? e.message : 'Deployment failed')
     } finally {
@@ -445,12 +449,42 @@ export default function SelectVMPage() {
     setNewTemplateDescription('')
     setNewTemplatePrompt('')
     setCreateTemplateError(null)
+    setDuplicateTemplate(null)
   }
 
   const handleSelectTemplateIdea = (idea: TemplateIdea) => {
     setNewTemplateName(idea.name)
     setNewTemplateDescription(idea.description)
     setNewTemplatePrompt(`Create an AI agent that ${idea.description.toLowerCase()}. It should be helpful, efficient, and easy to use.`)
+    
+    // Check if a similar template already exists
+    checkForDuplicateTemplate(idea.name, idea.description)
+  }
+
+  const checkForDuplicateTemplate = (name: string, description: string) => {
+    // Check if there's an existing template with similar name or description
+    const normalizedName = name.toLowerCase().trim()
+    const normalizedDesc = description.toLowerCase().trim()
+    
+    const duplicate = templates.find(t => {
+      const tName = t.name.toLowerCase().trim()
+      const tDesc = t.description.toLowerCase().trim()
+      
+      // Check for exact name match or very similar name
+      const nameMatch = tName === normalizedName || 
+        tName.includes(normalizedName) || 
+        normalizedName.includes(tName)
+      
+      // Check for similar description (contains most of the words)
+      const descWords = normalizedDesc.split(/\s+/).filter(w => w.length > 3)
+      const tDescWords = tDesc.split(/\s+/).filter(w => w.length > 3)
+      const matchingWords = descWords.filter(w => tDescWords.some(tw => tw.includes(w) || w.includes(tw)))
+      const descSimilar = descWords.length > 0 && matchingWords.length / descWords.length > 0.6
+      
+      return nameMatch || descSimilar
+    })
+    
+    setDuplicateTemplate(duplicate || null)
   }
 
   const handleCreateTemplate = async () => {
@@ -460,6 +494,12 @@ export default function SelectVMPage() {
     }
     if (!newTemplateDescription.trim()) {
       setCreateTemplateError('Please enter a description')
+      return
+    }
+
+    // If duplicate warning is shown, don't proceed
+    if (duplicateTemplate) {
+      setCreateTemplateError('Please personalize your template or deploy the existing one')
       return
     }
 
@@ -486,7 +526,7 @@ export default function SelectVMPage() {
       // Success - close modal and refresh templates
       setShowCreateTemplateModal(false)
       await loadTemplates()
-      
+
     } catch (e) {
       setCreateTemplateError(e instanceof Error ? e.message : 'Failed to create template')
     } finally {
@@ -500,11 +540,12 @@ export default function SelectVMPage() {
     setNewTemplateDescription('')
     setNewTemplatePrompt('')
     setCreateTemplateError(null)
+    setDuplicateTemplate(null)
   }
 
   const handleDeleteTemplate = async (e: React.MouseEvent, templateId: string) => {
     e.stopPropagation() // Prevent opening the deploy modal
-    
+
     if (!confirm('Are you sure you want to delete this template? This action cannot be undone.')) {
       return
     }
@@ -527,6 +568,21 @@ export default function SelectVMPage() {
     } finally {
       setDeletingTemplateId(null)
     }
+  }
+
+  const handleShareTemplate = (e: React.MouseEvent, templateId: string) => {
+    e.stopPropagation() // Prevent opening the deploy modal
+
+    const url = `${window.location.origin}/templates/${templateId}`
+    navigator.clipboard.writeText(url)
+    setCopiedTemplateId(templateId)
+    setTimeout(() => setCopiedTemplateId(null), 2000)
+  }
+
+  const handleOpenShareModal = (e: React.MouseEvent, template: Template) => {
+    e.stopPropagation() // Prevent opening the deploy modal
+    setTemplateToShare(template)
+    setShowTemplateShareModal(true)
   }
 
   useEffect(() => {
@@ -1323,11 +1379,10 @@ export default function SelectVMPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: 0.05 * (index + 1) }}
-                  className={`group relative p-5 rounded-xl border border-sam-border bg-sam-surface/50 transition-all ${
-                    template.comingSoon 
-                      ? 'opacity-75 cursor-not-allowed' 
+                  className={`group relative p-5 rounded-xl border border-sam-border bg-sam-surface/50 transition-all ${template.comingSoon
+                      ? 'opacity-75 cursor-not-allowed'
                       : 'hover:border-sam-accent/50 hover:bg-sam-surface/70 cursor-pointer'
-                  }`}
+                    }`}
                   onClick={() => !template.comingSoon && handleTemplateClick(template)}
                 >
                   {/* Template Logo and Info */}
@@ -1379,36 +1434,50 @@ export default function SelectVMPage() {
                       </span>
                     ) : (
                       <button
-                        className="px-3 py-1.5 rounded-lg bg-sam-accent/10 border border-sam-accent/30 text-sam-accent text-sm font-medium hover:bg-sam-accent/20 hover:border-sam-accent/50 transition-all flex items-center gap-1.5"
+                        onClick={(e) => handleOpenShareModal(e, template)}
+                        className="px-3 py-1.5 rounded-lg border border-sam-border text-sam-text-dim text-sm font-medium hover:border-sam-accent/50 hover:text-sam-text transition-all flex items-center gap-1.5"
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Deploy
+                        <Share2 className="w-3.5 h-3.5" />
+                        Share
                       </button>
                     )}
                   </div>
 
-                  {/* User-created badge and delete button */}
-                  {template.isUserCreated && (
-                    <div className="absolute top-3 right-3 flex items-center gap-2">
+                  {/* Top-right actions: Community badge, share, delete */}
+                  <div className="absolute top-3 right-3 flex items-center gap-2">
+                    {template.isUserCreated && (
                       <span className="text-[9px] font-mono text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">
                         Community
                       </span>
-                      {template.authorId === session?.user?.id && (
-                        <button
-                          onClick={(e) => handleDeleteTemplate(e, template.id)}
-                          disabled={deletingTemplateId === template.id}
-                          className="p-1 rounded hover:bg-sam-error/20 text-sam-text-dim hover:text-sam-error transition-colors disabled:opacity-50"
-                          title="Delete template"
-                        >
-                          {deletingTemplateId === template.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                        </button>
+                    )}
+                    {/* Share button */}
+                    <button
+                      onClick={(e) => handleShareTemplate(e, template.id)}
+                      className="p-1 rounded hover:bg-sam-accent/20 text-sam-text-dim hover:text-sam-accent transition-colors opacity-0 group-hover:opacity-100"
+                      title="Copy link to share"
+                    >
+                      {copiedTemplateId === template.id ? (
+                        <Check className="w-3.5 h-3.5 text-green-400" />
+                      ) : (
+                        <Link2 className="w-3.5 h-3.5" />
                       )}
-                    </div>
-                  )}
+                    </button>
+                    {/* Delete button - only for template author */}
+                    {template.isUserCreated && template.authorId === session?.user?.id && (
+                      <button
+                        onClick={(e) => handleDeleteTemplate(e, template.id)}
+                        disabled={deletingTemplateId === template.id}
+                        className="p-1 rounded hover:bg-sam-error/20 text-sam-text-dim hover:text-sam-error transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                        title="Delete template"
+                      >
+                        {deletingTemplateId === template.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
 
                   {/* Hover effect indicator */}
                   {!template.comingSoon && (
@@ -1451,8 +1520,8 @@ export default function SelectVMPage() {
                   onClick={() => handleProviderClick(option.id)}
                   disabled={isDisabled}
                   className={`relative p-5 rounded-xl border transition-all duration-300 text-left ${isDisabled
-                      ? 'border-sam-border bg-sam-surface/30 opacity-60 cursor-not-allowed'
-                      : 'border-sam-border bg-sam-surface/30 hover:border-sam-accent/50 hover:bg-sam-surface/40 cursor-pointer'
+                    ? 'border-sam-border bg-sam-surface/30 opacity-60 cursor-not-allowed'
+                    : 'border-sam-border bg-sam-surface/30 hover:border-sam-accent/50 hover:bg-sam-surface/40 cursor-pointer'
                     }`}
                 >
                   {/* Icon */}
@@ -1523,7 +1592,7 @@ export default function SelectVMPage() {
           >
             {/* Gradient border effect */}
             <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-blue-500/20 opacity-50 blur-sm -z-10" />
-            
+
             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
               <div className="flex-1 text-center md:text-left">
                 <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
@@ -1658,8 +1727,8 @@ export default function SelectVMPage() {
                         placeholder="Enter your Orgo API key"
                         disabled={keyValidated}
                         className={`flex-1 px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${keyValidated
-                            ? 'border-green-500/50 bg-green-500/5'
-                            : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
                           }`}
                       />
                       {!keyValidated ? (
@@ -1802,8 +1871,8 @@ export default function SelectVMPage() {
                               key={project.id}
                               onClick={() => handleSelectProject(project)}
                               className={`w-full p-3 rounded-lg border text-left transition-all ${selectedProject?.id === project.id
-                                  ? 'border-sam-accent bg-sam-accent/10'
-                                  : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                                ? 'border-sam-accent bg-sam-accent/10'
+                                : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
                                 }`}
                             >
                               <div className="flex items-center justify-between">
@@ -1884,8 +1953,8 @@ export default function SelectVMPage() {
                           key={option.id}
                           onClick={() => setSelectedOrgoRAM(option.id)}
                           className={`p-2.5 rounded-lg border text-left transition-all flex flex-col justify-center ${selectedOrgoRAM === option.id
-                              ? 'border-sam-accent bg-sam-accent/10'
-                              : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                            ? 'border-sam-accent bg-sam-accent/10'
+                            : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
                             }`}
                         >
                           <div className="flex items-center justify-between mb-0.5">
@@ -2072,8 +2141,8 @@ export default function SelectVMPage() {
                         placeholder="Access Key (e.g., AKIAIOSFODNN7EXAMPLE)"
                         disabled={awsKeyValidated}
                         className={`w-full px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${awsKeyValidated
-                            ? 'border-green-500/50 bg-green-500/5'
-                            : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
                           }`}
                       />
                       <input
@@ -2086,8 +2155,8 @@ export default function SelectVMPage() {
                         placeholder="Secret Access Key"
                         disabled={awsKeyValidated}
                         className={`w-full px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${awsKeyValidated
-                            ? 'border-green-500/50 bg-green-500/5'
-                            : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
                           }`}
                       />
                     </div>
@@ -2191,8 +2260,8 @@ export default function SelectVMPage() {
                             key={type.id}
                             onClick={() => setAwsInstanceType(type.id)}
                             className={`p-3 rounded-lg border text-left transition-all ${awsInstanceType === type.id
-                                ? 'border-sam-accent bg-sam-accent/10'
-                                : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                              ? 'border-sam-accent bg-sam-accent/10'
+                              : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
                               }`}
                           >
                             <div className="flex items-center justify-between mb-1">
@@ -2366,8 +2435,8 @@ export default function SelectVMPage() {
                         placeholder="e2b_..."
                         disabled={e2bKeyValidated}
                         className={`flex-1 px-4 py-2.5 rounded-lg bg-sam-bg border transition-all text-sam-text placeholder:text-sam-text-dim/50 font-mono text-sm ${e2bKeyValidated
-                            ? 'border-green-500/50 bg-green-500/5'
-                            : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
+                          ? 'border-green-500/50 bg-green-500/5'
+                          : 'border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30'
                           }`}
                       />
                       {!e2bKeyValidated ? (
@@ -2442,8 +2511,8 @@ export default function SelectVMPage() {
                             key={option.id}
                             onClick={() => setSelectedE2bTimeout(option.id)}
                             className={`p-3 rounded-lg border text-left transition-all ${selectedE2bTimeout === option.id
-                                ? 'border-sam-accent bg-sam-accent/10'
-                                : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                              ? 'border-sam-accent bg-sam-accent/10'
+                              : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
                               }`}
                           >
                             <div className="flex items-center justify-between mb-1">
@@ -2464,7 +2533,7 @@ export default function SelectVMPage() {
                         ))}
                       </div>
                     </div>
-                    
+
                     {/* Pro Plan Notice for paid durations */}
                     {(() => {
                       const selectedOption = (e2bTimeoutOptions.length > 0 ? e2bTimeoutOptions : [
@@ -2705,170 +2774,168 @@ export default function SelectVMPage() {
                 {/* Show rest of the form only after API key is validated */}
                 {(credentials?.hasOrgoApiKey || keyValidated) && (
                   <>
-                {/* Agent Name Input */}
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-sam-text flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-sam-accent" />
-                    Agent Name
-                    <span className="text-sam-error">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={templateAgentName}
-                    onChange={(e) => setTemplateAgentName(e.target.value)}
-                    placeholder="e.g., MyAwesomeAgent"
-                    className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
-                  />
-                  <p className="text-xs text-sam-text-dim">
-                    This name will be used to register your agent with {selectedTemplate.name}
-                  </p>
-                </div>
-
-                {/* Project Selection */}
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-sam-text flex items-center gap-2">
-                    <FolderPlus className="w-4 h-4 text-sam-accent" />
-                    Orgo Project
-                    <span className="text-sam-error">*</span>
-                  </label>
-                  {isLoadingProjectsForTemplate ? (
-                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border text-sam-text-dim">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="text-sm">Loading projects...</span>
-                    </div>
-                  ) : orgoProjects.length > 0 ? (
-                    <div className="space-y-2">
-                      {orgoProjects.map((project) => (
-                        <button
-                          key={project.id}
-                          onClick={() => setSelectedTemplateProject(project)}
-                          className={`w-full p-3 rounded-lg border text-left transition-all ${
-                            selectedTemplateProject?.id === project.id
-                              ? 'border-sam-accent bg-sam-accent/10'
-                              : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-sam-text font-medium text-sm">{project.name}</span>
-                            {selectedTemplateProject?.id === project.id && (
-                              <CheckCircle2 className="w-4 h-4 text-sam-accent" />
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
+                    {/* Agent Name Input */}
                     <div className="space-y-3">
-                      <p className="text-sm text-sam-text-dim">
-                        No projects found. Create your first project:
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-sam-accent" />
+                        Agent Name
+                        <span className="text-sam-error">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={templateAgentName}
+                        onChange={(e) => setTemplateAgentName(e.target.value)}
+                        placeholder="e.g., MyAwesomeAgent"
+                        className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
+                      />
+                      <p className="text-xs text-sam-text-dim">
+                        This name will be used to register your agent with {selectedTemplate.name}
                       </p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newProjectName}
-                          onChange={(e) => setNewProjectName(e.target.value)}
-                          placeholder="Project name"
-                          className="flex-1 px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
-                        />
-                        <button
-                          onClick={async () => {
-                            if (!newProjectName.trim()) {
-                              setTemplateError('Please enter a project name')
-                              return
-                            }
-                            setIsCreatingProject(true)
-                            setTemplateError(null)
-                            try {
-                              const res = await fetch('/api/setup/orgo/create-project', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ projectName: newProjectName.trim() }),
-                              })
-                              const data = await res.json()
-                              if (!res.ok) {
-                                throw new Error(data.error || 'Failed to create project')
-                              }
-                              setOrgoProjects(prev => [...prev, data.project])
-                              setSelectedTemplateProject(data.project)
-                            } catch (e) {
-                              setTemplateError(e instanceof Error ? e.message : 'Failed to create project')
-                            } finally {
-                              setIsCreatingProject(false)
-                            }
-                          }}
-                          disabled={isCreatingProject || !newProjectName.trim()}
-                          className="px-4 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                          {isCreatingProject ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Creating
-                            </>
-                          ) : (
-                            'Create'
-                          )}
-                        </button>
+                    </div>
+
+                    {/* Project Selection */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <FolderPlus className="w-4 h-4 text-sam-accent" />
+                        Orgo Project
+                        <span className="text-sam-error">*</span>
+                      </label>
+                      {isLoadingProjectsForTemplate ? (
+                        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border text-sam-text-dim">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span className="text-sm">Loading projects...</span>
+                        </div>
+                      ) : orgoProjects.length > 0 ? (
+                        <div className="space-y-2">
+                          {orgoProjects.map((project) => (
+                            <button
+                              key={project.id}
+                              onClick={() => setSelectedTemplateProject(project)}
+                              className={`w-full p-3 rounded-lg border text-left transition-all ${selectedTemplateProject?.id === project.id
+                                  ? 'border-sam-accent bg-sam-accent/10'
+                                  : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                                }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-sam-text font-medium text-sm">{project.name}</span>
+                                {selectedTemplateProject?.id === project.id && (
+                                  <CheckCircle2 className="w-4 h-4 text-sam-accent" />
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="text-sm text-sam-text-dim">
+                            No projects found. Create your first project:
+                          </p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newProjectName}
+                              onChange={(e) => setNewProjectName(e.target.value)}
+                              placeholder="Project name"
+                              className="flex-1 px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!newProjectName.trim()) {
+                                  setTemplateError('Please enter a project name')
+                                  return
+                                }
+                                setIsCreatingProject(true)
+                                setTemplateError(null)
+                                try {
+                                  const res = await fetch('/api/setup/orgo/create-project', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ projectName: newProjectName.trim() }),
+                                  })
+                                  const data = await res.json()
+                                  if (!res.ok) {
+                                    throw new Error(data.error || 'Failed to create project')
+                                  }
+                                  setOrgoProjects(prev => [...prev, data.project])
+                                  setSelectedTemplateProject(data.project)
+                                } catch (e) {
+                                  setTemplateError(e instanceof Error ? e.message : 'Failed to create project')
+                                } finally {
+                                  setIsCreatingProject(false)
+                                }
+                              }}
+                              disabled={isCreatingProject || !newProjectName.trim()}
+                              className="px-4 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              {isCreatingProject ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Creating
+                                </>
+                              ) : (
+                                'Create'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* RAM Selection */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <Server className="w-4 h-4 text-sam-accent" />
+                        Memory (RAM)
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {orgoRAMOptions.map((option) => {
+                          const isDisabled = option.id < selectedTemplate.vmConfig.minRam
+                          return (
+                            <button
+                              key={option.id}
+                              onClick={() => !isDisabled && setSelectedTemplateRAM(option.id)}
+                              disabled={isDisabled}
+                              className={`p-2.5 rounded-lg border text-left transition-all flex flex-col justify-center ${isDisabled
+                                  ? 'border-sam-border/50 opacity-40 cursor-not-allowed'
+                                  : selectedTemplateRAM === option.id
+                                    ? 'border-sam-accent bg-sam-accent/10'
+                                    : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
+                                }`}
+                            >
+                              <div className="flex items-center justify-between mb-0.5">
+                                <span className="text-sam-text font-medium text-sm">{option.name}</span>
+                                {option.id === selectedTemplate.vmConfig.recommendedRam && (
+                                  <span className="text-[9px] font-mono text-sam-accent bg-sam-accent/10 px-1 py-0.5 rounded">
+                                    Best
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-sam-text-dim">
+                                {option.description}
+                              </div>
+                              <div className={`text-[10px] mt-1 font-medium ${option.freeTier ? 'text-green-400' : 'text-amber-400'}`}>
+                                {option.freeTier ? 'Free Tier' : 'Paid Plan'}
+                              </div>
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
-                  )}
-                </div>
 
-                {/* RAM Selection */}
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-sam-text flex items-center gap-2">
-                    <Server className="w-4 h-4 text-sam-accent" />
-                    Memory (RAM)
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {orgoRAMOptions.map((option) => {
-                      const isDisabled = option.id < selectedTemplate.vmConfig.minRam
-                      return (
-                        <button
-                          key={option.id}
-                          onClick={() => !isDisabled && setSelectedTemplateRAM(option.id)}
-                          disabled={isDisabled}
-                          className={`p-2.5 rounded-lg border text-left transition-all flex flex-col justify-center ${
-                            isDisabled
-                              ? 'border-sam-border/50 opacity-40 cursor-not-allowed'
-                              : selectedTemplateRAM === option.id
-                              ? 'border-sam-accent bg-sam-accent/10'
-                              : 'border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-sam-text font-medium text-sm">{option.name}</span>
-                            {option.id === selectedTemplate.vmConfig.recommendedRam && (
-                              <span className="text-[9px] font-mono text-sam-accent bg-sam-accent/10 px-1 py-0.5 rounded">
-                                Best
-                              </span>
-                            )}
+                    {/* Pro Plan Notice */}
+                    {!orgoRAMOptions.find(opt => opt.id === selectedTemplateRAM)?.freeTier && (
+                      <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-blue-400 font-medium">Pro Plan Feature</p>
+                            <p className="text-blue-400/80 text-sm mt-1">
+                              {orgoRAMOptions.find(opt => opt.id === selectedTemplateRAM)?.name} RAM requires an Orgo Pro plan.
+                            </p>
                           </div>
-                          <div className="text-[10px] text-sam-text-dim">
-                            {option.description}
-                          </div>
-                          <div className={`text-[10px] mt-1 font-medium ${option.freeTier ? 'text-green-400' : 'text-amber-400'}`}>
-                            {option.freeTier ? 'Free Tier' : 'Paid Plan'}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Pro Plan Notice */}
-                {!orgoRAMOptions.find(opt => opt.id === selectedTemplateRAM)?.freeTier && (
-                  <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-blue-400 font-medium">Pro Plan Feature</p>
-                        <p className="text-blue-400/80 text-sm mt-1">
-                          {orgoRAMOptions.find(opt => opt.id === selectedTemplateRAM)?.name} RAM requires an Orgo Pro plan.
-                        </p>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                )}
+                    )}
                   </>
                 )}
 
@@ -2985,7 +3052,7 @@ export default function SelectVMPage() {
                 >
                   <CheckCircle2 className="w-10 h-10 text-sam-accent" />
                 </motion.div>
-                
+
                 <motion.h2
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -2994,7 +3061,7 @@ export default function SelectVMPage() {
                 >
                   Agent Deployed!
                 </motion.h2>
-                
+
                 <motion.p
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -3128,11 +3195,10 @@ export default function SelectVMPage() {
                       <button
                         key={idea.name}
                         onClick={() => handleSelectTemplateIdea(idea)}
-                        className={`p-3 rounded-lg border text-left transition-all hover:border-sam-accent/50 hover:bg-sam-accent/5 ${
-                          newTemplateName === idea.name 
-                            ? 'border-sam-accent bg-sam-accent/10' 
+                        className={`p-3 rounded-lg border text-left transition-all hover:border-sam-accent/50 hover:bg-sam-accent/5 ${newTemplateName === idea.name
+                            ? 'border-sam-accent bg-sam-accent/10'
                             : 'border-sam-border'
-                        }`}
+                          }`}
                       >
                         <div className="text-2xl mb-1">{idea.icon}</div>
                         <div className="text-xs font-medium text-sam-text truncate">{idea.name}</div>
@@ -3144,6 +3210,43 @@ export default function SelectVMPage() {
                   </div>
                 </div>
 
+                {/* Duplicate Template Warning */}
+                {duplicateTemplate && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/30"
+                  >
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-amber-400 font-medium text-sm">Similar template already exists</p>
+                        <p className="text-amber-400/80 text-xs mt-1 mb-3">
+                          A template called "{duplicateTemplate.name}" already exists. You can deploy it directly or personalize your template by changing the name and description.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => {
+                              closeCreateTemplateModal()
+                              handleTemplateClick(duplicateTemplate)
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-sam-accent text-sam-bg font-medium text-xs hover:bg-sam-accent/90 transition-colors flex items-center gap-1.5"
+                          >
+                            <Rocket className="w-3.5 h-3.5" />
+                            Deploy "{duplicateTemplate.name}"
+                          </button>
+                          <button
+                            onClick={() => setDuplicateTemplate(null)}
+                            className="px-3 py-1.5 rounded-lg border border-amber-500/50 text-amber-400 font-medium text-xs hover:bg-amber-500/10 transition-colors"
+                          >
+                            Personalize Instead
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* Template Name */}
                 <div className="space-y-3">
                   <label className="text-sm font-medium text-sam-text flex items-center gap-2">
@@ -3153,7 +3256,11 @@ export default function SelectVMPage() {
                   <input
                     type="text"
                     value={newTemplateName}
-                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    onChange={(e) => {
+                      setNewTemplateName(e.target.value)
+                      // Clear duplicate warning when user starts typing
+                      if (duplicateTemplate) setDuplicateTemplate(null)
+                    }}
                     placeholder="e.g., Personal Assistant, Code Reviewer"
                     className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
                   />
@@ -3168,7 +3275,11 @@ export default function SelectVMPage() {
                   <input
                     type="text"
                     value={newTemplateDescription}
-                    onChange={(e) => setNewTemplateDescription(e.target.value)}
+                    onChange={(e) => {
+                      setNewTemplateDescription(e.target.value)
+                      // Clear duplicate warning when user starts typing
+                      if (duplicateTemplate) setDuplicateTemplate(null)
+                    }}
                     placeholder="A brief description of what this agent does"
                     className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text placeholder:text-sam-text-dim/50 text-sm"
                   />
@@ -3199,7 +3310,7 @@ export default function SelectVMPage() {
                     <div className="flex-1">
                       <p className="text-blue-400 font-medium text-sm">How it works</p>
                       <p className="text-blue-400/80 text-xs mt-1">
-                        Your template will be added to the marketplace and can be deployed to any VM. 
+                        Your template will be added to the marketplace and can be deployed to any VM.
                         Other users can discover and use your template too!
                       </p>
                     </div>
@@ -3244,6 +3355,154 @@ export default function SelectVMPage() {
                       Create Template
                     </>
                   )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Template Share Modal */}
+      <AnimatePresence>
+        {showTemplateShareModal && templateToShare && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowTemplateShareModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-sam-surface border border-sam-border rounded-2xl w-full max-w-md overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b border-sam-border">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-sam-accent/10 flex items-center justify-center">
+                    <Share2 className="w-5 h-5 text-sam-accent" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-display font-semibold text-sam-text">
+                      Share Template
+                    </h2>
+                    <p className="text-xs text-sam-text-dim">{templateToShare.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTemplateShareModal(false)}
+                  className="p-2 rounded-lg hover:bg-sam-bg transition-colors text-sam-text-dim hover:text-sam-text"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4">
+                {/* Share URL Preview */}
+                <div className="p-3 rounded-lg bg-sam-bg border border-sam-border">
+                  <p className="text-xs text-sam-text-dim mb-1">Share URL</p>
+                  <p className="text-sm text-sam-text font-mono truncate">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/templates/${templateToShare.id}` : ''}
+                  </p>
+                </div>
+
+                {/* Share Options */}
+                <div className="space-y-2">
+                  {/* Copy Link */}
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/templates/${templateToShare.id}`
+                      navigator.clipboard.writeText(url)
+                      setCopiedTemplateId(templateToShare.id)
+                      setTimeout(() => setCopiedTemplateId(null), 2000)
+                    }}
+                    className="w-full p-4 rounded-xl border border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg/50 transition-all flex items-center gap-4"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-sam-bg flex items-center justify-center flex-shrink-0">
+                      {copiedTemplateId === templateToShare.id ? (
+                        <Check className="w-5 h-5 text-green-400" />
+                      ) : (
+                        <Link2 className="w-5 h-5 text-sam-text-dim" />
+                      )}
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sam-text font-medium text-sm">
+                        {copiedTemplateId === templateToShare.id ? 'Copied!' : 'Copy Link'}
+                      </p>
+                      <p className="text-xs text-sam-text-dim">Copy the template URL to clipboard</p>
+                    </div>
+                  </button>
+
+                  {/* Post on X (Twitter) */}
+                  <a
+                    href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`This ${templateToShare.name} AI agent template is insane.\n\n${templateToShare.description}\n\nCheck it out on ClawdBody.`)}&url=${encodeURIComponent(`${typeof window !== 'undefined' ? window.location.origin : 'https://clawdbody.com'}/templates/${templateToShare.id}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full p-4 rounded-xl border border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg/50 transition-all flex items-center gap-4"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-sam-bg flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-sam-text-dim" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sam-text font-medium text-sm">Post on X</p>
+                      <p className="text-xs text-sam-text-dim">Share to your X (Twitter) feed</p>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-sam-text-dim" />
+                  </a>
+
+                  {/* Post on LinkedIn */}
+                  <a
+                    href={`https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(`Just found this ${templateToShare.name} AI agent template and had to share.\n${templateToShare.description}\n\nIt's available on ClawdBody.\n\nWhat workflows are you automating with AI agents?`)}&url=${encodeURIComponent(`${typeof window !== 'undefined' ? window.location.origin : 'https://clawdbody.com'}/templates/${templateToShare.id}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full p-4 rounded-xl border border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg/50 transition-all flex items-center gap-4"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-sam-bg flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-sam-text-dim" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sam-text font-medium text-sm">Post on LinkedIn</p>
+                      <p className="text-xs text-sam-text-dim">Share to your LinkedIn network</p>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-sam-text-dim" />
+                  </a>
+
+                  {/* Share via Email */}
+                  <a
+                    href={`mailto:?subject=${encodeURIComponent(`${templateToShare.name} — AI agent template I found to automate entire workflow`)}&body=${encodeURIComponent(`Hey,\n\nFound this AI agent template and thought you might find it useful:\n\n${templateToShare.name}\n${templateToShare.description}\n\nIt's available on ClawdBody:\n${typeof window !== 'undefined' ? window.location.origin : 'https://clawdbody.com'}/templates/${templateToShare.id}`)}`}
+                    className="w-full p-4 rounded-xl border border-sam-border hover:border-sam-accent/50 hover:bg-sam-bg/50 transition-all flex items-center gap-4"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-sam-bg flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-sam-text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="4" width="20" height="16" rx="2" />
+                        <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sam-text font-medium text-sm">Share via Email</p>
+                      <p className="text-xs text-sam-text-dim">Send template link via email</p>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-sam-text-dim" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-sam-border">
+                <button
+                  onClick={() => setShowTemplateShareModal(false)}
+                  className="w-full px-4 py-2.5 rounded-lg border border-sam-border text-sam-text-dim hover:text-sam-text hover:border-sam-accent/50 font-medium text-sm transition-colors"
+                >
+                  Close
                 </button>
               </div>
             </motion.div>

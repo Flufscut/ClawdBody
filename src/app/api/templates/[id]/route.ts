@@ -2,6 +2,53 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getTemplateById, convertDbTemplate, type Template } from '@/lib/templates'
+
+/**
+ * GET /api/templates/[id] - Get a single template by ID
+ * 
+ * Works for both built-in and user-created templates.
+ * No authentication required - templates are public.
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const templateId = params.id
+
+    if (!templateId) {
+      return NextResponse.json({ error: 'Template ID is required' }, { status: 400 })
+    }
+
+    // First check built-in templates
+    let template: Template | undefined = getTemplateById(templateId)
+    
+    if (!template) {
+      // Check database for user-created templates
+      const dbTemplate = await prisma.marketplaceTemplate.findFirst({
+        where: { templateId },
+      })
+      
+      if (dbTemplate) {
+        template = convertDbTemplate(dbTemplate)
+      }
+    }
+
+    if (!template) {
+      return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+    }
+
+    return NextResponse.json({ template })
+    
+  } catch (error) {
+    console.error('[Templates] Error fetching template:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to fetch template' },
+      { status: 500 }
+    )
+  }
+}
 
 /**
  * DELETE /api/templates/[id] - Delete a user-created template
