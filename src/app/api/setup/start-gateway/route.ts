@@ -26,17 +26,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Telegram is not configured. Please configure Telegram first.' }, { status: 400 })
     }
 
-    const orgoApiKey = process.env.ORGO_API_KEY
-    if (!orgoApiKey) {
+    // Get LLM config from setup state
+    const llmApiKeyEncrypted = setupState.llmApiKey
+    const llmProvider = setupState.llmProvider
+    
+    if (!llmApiKeyEncrypted || !llmProvider) {
+      return NextResponse.json({ error: 'LLM API key not configured' }, { status: 400 })
+    }
+    
+    // Decrypt the stored API key
+    const llmApiKey = decrypt(llmApiKeyEncrypted)
+
+    // Get Orgo API key
+    const orgoApiKeyEncrypted = setupState.orgoApiKey
+    if (!orgoApiKeyEncrypted) {
       return NextResponse.json({ error: 'Orgo API key not configured' }, { status: 500 })
     }
-
-    const claudeApiKeyEncrypted = setupState.claudeApiKey
-    if (!claudeApiKeyEncrypted) {
-      return NextResponse.json({ error: 'Claude API key not found' }, { status: 400 })
-    }
-    // Decrypt the stored API key
-    const claudeApiKey = decrypt(claudeApiKeyEncrypted)
+    const orgoApiKey = decrypt(orgoApiKeyEncrypted)
 
     // Get Telegram token from config file on VM
     const orgoClient = new OrgoClient(orgoApiKey)
@@ -62,7 +68,11 @@ export async function POST(request: NextRequest) {
     await new Promise(resolve => setTimeout(resolve, 2000))
 
     // Start the gateway
-    const gatewaySuccess = await vmSetup.startClawdbotGateway(claudeApiKey, telegramBotToken)
+    const gatewaySuccess = await vmSetup.startClawdbotGateway({
+      llmApiKey,
+      llmProvider,
+      telegramBotToken,
+    })
 
     await prisma.setupState.update({
       where: { userId: session.user.id },

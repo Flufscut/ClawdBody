@@ -6,7 +6,8 @@ import { encrypt, decrypt } from '@/lib/encryption'
 
 /**
  * GET /api/setup/anthropic-key
- * Check if user has a stored Anthropic API key and return masked version
+ * Check if user has a stored LLM API key and return masked version
+ * (Legacy endpoint - kept for backward compatibility, uses unified llmApiKey)
  */
 export async function GET() {
   try {
@@ -18,10 +19,10 @@ export async function GET() {
 
     const setupState = await prisma.setupState.findUnique({
       where: { userId: session.user.id },
-      select: { claudeApiKey: true },
+      select: { llmApiKey: true, llmProvider: true },
     })
 
-    if (!setupState?.claudeApiKey) {
+    if (!setupState?.llmApiKey) {
       return NextResponse.json({
         hasKey: false,
         maskedKey: null,
@@ -30,7 +31,7 @@ export async function GET() {
 
     // Decrypt and mask the key for display
     try {
-      const decryptedKey = decrypt(setupState.claudeApiKey)
+      const decryptedKey = decrypt(setupState.llmApiKey)
       // Mask the key: show first 12 chars and last 4 chars
       const maskedKey = decryptedKey.length > 16
         ? `${decryptedKey.slice(0, 12)}...${decryptedKey.slice(-4)}`
@@ -39,6 +40,7 @@ export async function GET() {
       return NextResponse.json({
         hasKey: true,
         maskedKey,
+        provider: setupState.llmProvider,
       })
     } catch (decryptError) {
       // Key exists but couldn't be decrypted - treat as no key
@@ -58,7 +60,8 @@ export async function GET() {
 
 /**
  * PUT /api/setup/anthropic-key
- * Update/set the Anthropic API key
+ * Update/set the LLM API key (for Anthropic, auto-detect provider)
+ * (Legacy endpoint - kept for backward compatibility)
  */
 export async function PUT(request: NextRequest) {
   try {
@@ -68,38 +71,56 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { claudeApiKey } = await request.json()
+    const body = await request.json()
+    const apiKey = body.claudeApiKey || body.apiKey
 
-    if (!claudeApiKey || typeof claudeApiKey !== 'string') {
+    if (!apiKey || typeof apiKey !== 'string') {
       return NextResponse.json({ error: 'API key is required' }, { status: 400 })
     }
 
-    // Validate API key format (basic check)
-    if (!claudeApiKey.startsWith('sk-ant-')) {
-      return NextResponse.json({ error: 'Invalid Anthropic API key format' }, { status: 400 })
+    // Detect provider from key prefix
+    let provider = 'anthropic'
+    let defaultModel = 'claude-sonnet-4'
+    
+    if (apiKey.startsWith('sk-or-')) {
+      provider = 'openrouter'
+      defaultModel = 'anthropic/claude-3.5-sonnet'
+    } else if (apiKey.startsWith('sk-ant-')) {
+      provider = 'anthropic'
+      defaultModel = 'claude-sonnet-4'
+    } else if (apiKey.startsWith('sk-')) {
+      provider = 'openai'
+      defaultModel = 'gpt-4o'
     }
 
     // Encrypt and store the key
-    const encryptedKey = encrypt(claudeApiKey)
+    const encryptedKey = encrypt(apiKey)
 
     await prisma.setupState.upsert({
       where: { userId: session.user.id },
-      update: { claudeApiKey: encryptedKey },
+      update: { 
+        llmApiKey: encryptedKey,
+        llmProvider: provider,
+        llmModel: defaultModel,
+      },
       create: {
         userId: session.user.id,
-        claudeApiKey: encryptedKey,
+        llmApiKey: encryptedKey,
+        llmProvider: provider,
+        llmModel: defaultModel,
         status: 'pending',
       },
     })
 
     // Mask the key for response
-    const maskedKey = claudeApiKey.length > 16
-      ? `${claudeApiKey.slice(0, 12)}...${claudeApiKey.slice(-4)}`
+    const maskedKey = apiKey.length > 16
+      ? `${apiKey.slice(0, 12)}...${apiKey.slice(-4)}`
       : '***'
 
     return NextResponse.json({
       success: true,
       maskedKey,
+      provider,
     })
 
   } catch (error) {
@@ -112,7 +133,8 @@ export async function PUT(request: NextRequest) {
 
 /**
  * DELETE /api/setup/anthropic-key
- * Remove the stored Anthropic API key
+ * Remove the stored LLM API key
+ * (Legacy endpoint - kept for backward compatibility)
  */
 export async function DELETE() {
   try {
@@ -132,7 +154,11 @@ export async function DELETE() {
 
     await prisma.setupState.update({
       where: { userId: session.user.id },
-      data: { claudeApiKey: null },
+      data: { 
+        llmApiKey: null,
+        llmProvider: null,
+        llmModel: null,
+      },
     })
 
     return NextResponse.json({ success: true })

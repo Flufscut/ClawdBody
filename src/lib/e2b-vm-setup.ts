@@ -6,6 +6,7 @@
 
 import Sandbox from '@e2b/code-interpreter'
 import { E2BClient } from './e2b'
+import { LLM_PROVIDERS, type LLMProvider } from './llm-providers'
 
 export interface SetupProgress {
   step: string
@@ -284,7 +285,9 @@ export class E2BVMSetup {
    * Configure Clawdbot with Telegram and heartbeat
    */
   async setupClawdbotTelegram(options: {
-    claudeApiKey: string
+    llmApiKey: string
+    llmProvider: string
+    llmModel: string
     telegramBotToken: string
     telegramUserId?: string
     clawdbotVersion?: string
@@ -293,7 +296,9 @@ export class E2BVMSetup {
     apiBaseUrl?: string
   }): Promise<boolean> {
     const {
-      claudeApiKey,
+      llmApiKey,
+      llmProvider,
+      llmModel,
       telegramBotToken,
       telegramUserId,
       clawdbotVersion = '2026.1.22',
@@ -301,6 +306,17 @@ export class E2BVMSetup {
       userId,
       apiBaseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000',
     } = options
+    
+    // Validate we have API key
+    if (!llmApiKey) {
+      throw new Error('LLM API key is required')
+    }
+    
+    // Get provider config
+    const provider = LLM_PROVIDERS.find(p => p.id === llmProvider)
+    if (!provider) {
+      throw new Error(`Unknown LLM provider: ${llmProvider}`)
+    }
 
     // Create directories
     await this.runCommand('mkdir -p ~/.clawdbot /home/user/clawd/knowledge', 'Create Clawdbot directories')
@@ -342,22 +358,68 @@ Your workspace is at /home/user/clawd.
 
     await this.e2bClient.writeFile(this.sandbox, '/home/user/clawd/CLAUDE.md', claudeMdContent)
 
+    // Build auth profile for the detected provider
+    const authProfiles: Record<string, any> = {
+      [`${provider.id}:default`]: {
+        provider: provider.id,
+        mode: 'api_key'
+      }
+    }
+    
+    // Build models.providers config for providers that need it
+    let modelsProviders: Record<string, any> | null = null
+    
+    if (provider.needsModelsProviders && provider.baseUrl) {
+      // Extract just the model ID from the full model path (e.g., "openrouter/openai/gpt-4o" -> "openai/gpt-4o")
+      const modelId = llmModel.startsWith(`${provider.id}/`) 
+        ? llmModel.substring(provider.id.length + 1) 
+        : llmModel
+      
+      const providerConfig: Record<string, any> = {
+        baseUrl: provider.baseUrl,
+        apiKey: `\${${provider.envVar}}`,
+        api: 'openai-completions',
+        models: [
+          { id: modelId, name: modelId }
+        ]
+      }
+      
+      // Add OpenRouter-specific headers
+      if (provider.id === 'openrouter') {
+        providerConfig.headers = {
+          'HTTP-Referer': 'https://clawdbody.com',
+          'X-Title': 'Clawdbot'
+        }
+      }
+      
+      modelsProviders = {
+        [provider.id]: providerConfig
+      }
+    }
+    
+    // Use the configured model
+    const primaryModel = llmModel
+
+    // Build env section for API key
+    const envSection: Record<string, string> = {
+      [provider.envVar]: llmApiKey
+    }
+
     // Create config JSON
     const configJson = `{
   "meta": {
     "lastTouchedVersion": "${clawdbotVersion}"
-  },
+  },${Object.keys(envSection).length > 0 ? `
+  "env": ${JSON.stringify(envSection, null, 4).replace(/\n/g, '\n  ')},` : ''}
   "auth": {
-    "profiles": {
-      "anthropic:default": {
-        "provider": "anthropic",
-        "mode": "api_key"
-      }
-    }
+    "profiles": ${JSON.stringify(authProfiles, null, 6).replace(/\n/g, '\n    ')}
   },
   "agents": {
     "defaults": {
       "workspace": "/home/user/clawd",
+      "model": {
+        "primary": "${primaryModel}"
+      },
       "compaction": {
         "mode": "safeguard"
       },
@@ -368,7 +430,11 @@ Your workspace is at /home/user/clawd.
         "activeHours": { "start": "00:00", "end": "24:00" }
       }
     }
-  },
+  },${modelsProviders ? `
+  "models": {
+    "mode": "merge",
+    "providers": ${JSON.stringify(modelsProviders, null, 6).replace(/\n/g, '\n    ')}
+  },` : ''}
   "channels": {
     "telegram": {
       "enabled": true,
@@ -391,16 +457,18 @@ Your workspace is at /home/user/clawd.
 
     await this.e2bClient.writeFile(this.sandbox, '/home/user/.clawdbot/clawdbot.json', configJson)
 
-    // Set environment variables by writing to .bashrc
-    const bashrcAdditions = `
-# Clawdbot configuration
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-export ANTHROPIC_API_KEY='${claudeApiKey}'
-export TELEGRAM_BOT_TOKEN='${telegramBotToken}'
-export SAMANTHA_API_URL='${apiBaseUrl}'
-export SAMANTHA_USER_ID='${userId || ''}'
-`
+    // Build environment variable exports
+    const envExports: string[] = [
+      '# Clawdbot configuration',
+      'export NVM_DIR="$HOME/.nvm"',
+      '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
+      `export ${provider.envVar}='${llmApiKey}'`,
+      `export TELEGRAM_BOT_TOKEN='${telegramBotToken}'`,
+      `export SAMANTHA_API_URL='${apiBaseUrl}'`,
+      `export SAMANTHA_USER_ID='${userId || ''}'`
+    ]
+    
+    const bashrcAdditions = '\n' + envExports.join('\n') + '\n'
 
     // Read current bashrc and remove any existing Clawdbot configuration to prevent duplicates
     let currentBashrc = await this.e2bClient.readFile(this.sandbox, '/home/user/.bashrc').catch(() => '')
@@ -423,7 +491,25 @@ export SAMANTHA_USER_ID='${userId || ''}'
   /**
    * Start the Clawdbot gateway as a background process
    */
-  async startClawdbotGateway(claudeApiKey: string, telegramBotToken: string): Promise<boolean> {
+  async startClawdbotGateway(options: {
+    llmApiKey: string
+    llmProvider: string
+    telegramBotToken: string
+  }): Promise<boolean> {
+    const { llmApiKey, llmProvider, telegramBotToken } = options
+    
+    // Get provider config
+    const provider = LLM_PROVIDERS.find(p => p.id === llmProvider)
+    if (!provider) {
+      throw new Error(`Unknown LLM provider: ${llmProvider}`)
+    }
+    
+    // Build environment variable exports
+    const envExports: string[] = [
+      `export ${provider.envVar}="${llmApiKey}"`,
+      `export TELEGRAM_BOT_TOKEN="${telegramBotToken}"`
+    ]
+    
     // Create startup script with better error handling
     const startupScript = `#!/bin/bash
 # Don't use set -e, we want to log errors
@@ -436,8 +522,7 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
 # Set environment variables
-export ANTHROPIC_API_KEY="${claudeApiKey}"
-export TELEGRAM_BOT_TOKEN="${telegramBotToken}"
+${envExports.join('\n')}
 
 # Log startup
 LOG_FILE="/tmp/clawdbot.log"
@@ -457,11 +542,8 @@ fi
 
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] Clawdbot found: $(which clawdbot)" >> "$LOG_FILE"
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running: clawdbot gateway run" >> "$LOG_FILE"
-if [ -n "$ANTHROPIC_API_KEY" ]; then
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ANTHROPIC_API_KEY: SET" >> "$LOG_FILE"
-else
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ANTHROPIC_API_KEY: NOT SET" >> "$LOG_FILE"
-fi
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] LLM_PROVIDER: ${llmProvider}" >> "$LOG_FILE"
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] ${provider.envVar}: SET" >> "$LOG_FILE"
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] TELEGRAM_BOT_TOKEN: SET" >> "$LOG_FILE"
 else

@@ -86,21 +86,43 @@ export async function POST(request: NextRequest) {
       .replace(/`/g, '\\`')
       .replace(/\$/g, '\\$')
     
-    // Get the Claude API key for the agent
-    const claudeApiKey = setupState.claudeApiKey
-    if (!claudeApiKey) {
-      return NextResponse.json({ error: 'Claude API key not configured' }, { status: 400 })
+    // Get LLM API key (unified approach)
+    const llmApiKey = (setupState as any).llmApiKey
+    const llmProvider = (setupState as any).llmProvider || 'anthropic'
+    const llmModel = (setupState as any).llmModel
+    
+    // Validate we have an API key
+    if (!llmApiKey) {
+      return NextResponse.json({ error: 'No API key configured. Please add an LLM API key.' }, { status: 400 })
     }
     
-    // Build the clawdbot command
-    const clawdbotCommand = `clawdbot agent --local --session-id "${chatSessionId}" --message "${escapedMessage}"`
+    // Build environment variable exports based on provider
+    const envExports: string[] = []
+    const envVarMap: Record<string, string> = {
+      anthropic: 'ANTHROPIC_API_KEY',
+      openrouter: 'OPENROUTER_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      google: 'GOOGLE_API_KEY',
+      groq: 'GROQ_API_KEY',
+      xai: 'XAI_API_KEY',
+      perplexity: 'PERPLEXITY_API_KEY',
+      fireworks: 'FIREWORKS_API_KEY',
+      cohere: 'COHERE_API_KEY',
+      moonshot: 'MOONSHOT_API_KEY',
+    }
+    const envVarName = envVarMap[llmProvider] || 'ANTHROPIC_API_KEY'
+    envExports.push(`export ${envVarName}="${llmApiKey}"`)
     
-    // Wrap command to source NVM and set ANTHROPIC_API_KEY for the agent
+    // Build the clawdbot command with model selection
+    const modelFlag = llmModel ? ` --model ${llmModel}` : ''
+    const clawdbotCommand = `clawdbot agent --local --session-id "${chatSessionId}"${modelFlag} --message "${escapedMessage}"`
+    
+    // Wrap command to source NVM and set API keys for the agent
     const wrappedCommand = `
 source ~/.bashrc 2>/dev/null || true
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-export ANTHROPIC_API_KEY="${claudeApiKey}"
+${envExports.join('\n')}
 ${clawdbotCommand}
 `.trim()
 
@@ -135,7 +157,7 @@ cat > /tmp/${jobId}.sh << 'SCRIPT_EOF'
 source ~/.bashrc 2>/dev/null || true
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-export ANTHROPIC_API_KEY="${claudeApiKey}"
+export ${envVarName}="${llmApiKey}"
 ${clawdbotCommand} > ${outputFile} 2>&1
 echo $? > ${doneFile}
 SCRIPT_EOF

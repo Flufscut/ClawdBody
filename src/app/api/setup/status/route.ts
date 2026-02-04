@@ -38,10 +38,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'VM not found' }, { status: 404 })
       }
 
-      // Get SetupState to check for stored Anthropic API key
+      // Get SetupState to check for stored LLM API key
       const setupState = await prisma.setupState.findUnique({
         where: { userId: session.user.id },
-        select: { claudeApiKey: true },
+        select: { llmApiKey: true, llmProvider: true },
       })
 
       const response: Record<string, unknown> = {
@@ -54,8 +54,10 @@ export async function GET(request: NextRequest) {
         vmProvider: vm.provider,
         vmId: vm.id,
         vmName: vm.name,
-        // Indicate if user has a stored Anthropic API key
-        hasAnthropicApiKey: !!setupState?.claudeApiKey,
+        // Indicate if user has a stored LLM API key (backward compat: also return as hasAnthropicApiKey)
+        hasLlmApiKey: !!setupState?.llmApiKey,
+        llmProvider: setupState?.llmProvider,
+        hasAnthropicApiKey: !!setupState?.llmApiKey, // backward compatibility
       }
 
       // Add provider-specific fields
@@ -106,8 +108,10 @@ export async function GET(request: NextRequest) {
       gatewayStarted: setupState.gatewayStarted,
       errorMessage: setupState.errorMessage,
       vmProvider: setupState.vmProvider,
-      // Indicate if user has a stored Anthropic API key
-      hasAnthropicApiKey: !!setupState.claudeApiKey,
+      // Indicate if user has a stored LLM API key (backward compat: also return as hasAnthropicApiKey)
+      hasLlmApiKey: !!setupState.llmApiKey,
+      llmProvider: setupState.llmProvider,
+      hasAnthropicApiKey: !!setupState.llmApiKey, // backward compatibility
     }
 
     // Add provider-specific fields

@@ -33,7 +33,9 @@ export async function GET() {
         awsSecretAccessKey: true,
         awsRegion: true,
         e2bApiKey: true,
-        claudeApiKey: true,
+        llmApiKey: true,
+        llmProvider: true,
+        llmModel: true,
       },
     })
 
@@ -116,12 +118,13 @@ export async function GET() {
       })
     }
 
-    // Get masked anthropic key if it exists
-    let anthropicApiKeyMasked: string | undefined
-    if (setupState?.claudeApiKey) {
+    // Get masked LLM API key if it exists
+    let llmApiKeyMasked: string | undefined
+    
+    if (setupState?.llmApiKey) {
       try {
-        const decryptedKey = decrypt(setupState.claudeApiKey)
-        anthropicApiKeyMasked = decryptedKey.length > 16
+        const decryptedKey = decrypt(setupState.llmApiKey)
+        llmApiKeyMasked = decryptedKey.length > 16
           ? `${decryptedKey.slice(0, 12)}...${decryptedKey.slice(-4)}`
           : '***'
       } catch {
@@ -136,8 +139,10 @@ export async function GET() {
         hasAwsCredentials: !!(setupState?.awsAccessKeyId && setupState?.awsSecretAccessKey),
         awsRegion: setupState?.awsRegion || 'us-east-1',
         hasE2bApiKey: !!setupState?.e2bApiKey,
-        hasAnthropicApiKey: !!setupState?.claudeApiKey,
-        anthropicApiKeyMasked,
+        hasLlmApiKey: !!setupState?.llmApiKey,
+        llmApiKeyMasked,
+        llmProvider: setupState?.llmProvider,
+        llmModel: setupState?.llmModel,
       },
     })
   } catch (error) {
@@ -177,7 +182,7 @@ export async function POST(request: NextRequest) {
       e2bTemplateId,
       e2bTimeout,
       // Setup credentials (to start setup immediately after VM creation)
-      claudeApiKey,
+      llmApiKey,
       useStoredApiKey,
     } = body
 
@@ -385,12 +390,12 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // If Anthropic API key is provided, trigger setup immediately (Telegram can be configured later)
-    const hasSetupCredentials = claudeApiKey || useStoredApiKey
+    // If LLM API key is provided, trigger setup immediately (Telegram can be configured later)
+    const hasSetupCredentials = llmApiKey || useStoredApiKey
     if (provisionNow && hasSetupCredentials && vm.vmCreated) {
       // Trigger setup in background (don't wait for it to complete)
       const setupPayload = {
-        claudeApiKey: claudeApiKey || undefined,
+        llmApiKey: llmApiKey || undefined,
         useStoredApiKey: useStoredApiKey || false,
         vmId: vm.id,
       }

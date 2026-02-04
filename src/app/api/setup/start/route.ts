@@ -9,6 +9,7 @@ import { VMSetup } from '@/lib/vm-setup'
 import { AWSVMSetup } from '@/lib/aws-vm-setup'
 import { E2BVMSetup } from '@/lib/e2b-vm-setup'
 import { encrypt, decrypt } from '@/lib/encryption'
+import { detectProvider, getSupportedProvidersText } from '@/lib/llm-providers'
 // Import type from Prisma client for type checking
 import type { SetupState } from '@prisma/client'
 
@@ -20,8 +21,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { claudeApiKey, useStoredApiKey, telegramBotToken, telegramUserId, vmId } = await request.json() as {
-      claudeApiKey?: string
+    const { llmApiKey, useStoredApiKey, telegramBotToken, telegramUserId, vmId } = await request.json() as {
+      llmApiKey?: string
       useStoredApiKey?: boolean
       telegramBotToken?: string
       telegramUserId?: string
@@ -33,20 +34,36 @@ export async function POST(request: NextRequest) {
       where: { userId: session.user.id },
     })
 
-    // Determine the API key to use
-    let finalClaudeApiKey: string | null = claudeApiKey || null
+    // Determine the API key and provider to use
+    let finalLlmApiKey: string | null = null
+    let finalLlmProvider: string | null = null
+    let finalLlmModel: string | null = null
 
-    if (!claudeApiKey && useStoredApiKey) {
-      // User wants to use the stored API key
-      if (!setupState?.claudeApiKey) {
-        return NextResponse.json({ error: 'No stored API key found. Please provide a Claude API key.' }, { status: 400 })
+    if (useStoredApiKey && setupState?.llmApiKey) {
+      // Use stored API key
+      finalLlmApiKey = decrypt(setupState.llmApiKey)
+      finalLlmProvider = setupState.llmProvider || null
+      finalLlmModel = setupState.llmModel || null
+    } else if (llmApiKey) {
+      // Use provided API key and auto-detect provider
+      const provider = detectProvider(llmApiKey)
+      if (!provider) {
+        return NextResponse.json({ 
+          error: 'Could not detect provider from API key',
+          supportedProviders: getSupportedProvidersText()
+        }, { status: 400 })
       }
-      // Decrypt the stored key for use
-      finalClaudeApiKey = decrypt(setupState.claudeApiKey)
+      finalLlmApiKey = llmApiKey
+      finalLlmProvider = provider.id
+      finalLlmModel = provider.defaultModel
     }
 
-    if (!finalClaudeApiKey) {
-      return NextResponse.json({ error: 'Claude API key is required' }, { status: 400 })
+    // Validate that API key is available
+    if (!finalLlmApiKey || !finalLlmProvider || !finalLlmModel) {
+      return NextResponse.json({ 
+        error: 'LLM API key is required',
+        supportedProviders: getSupportedProvidersText()
+      }, { status: 400 })
     }
 
     // If vmId is provided, get the VM to determine provider
@@ -99,15 +116,15 @@ export async function POST(request: NextRequest) {
     // Check if VM is already provisioned (has a cloud resource)
     const isVMAlreadyProvisioned = vm && vm.vmCreated && (vm.orgoComputerId || vm.awsInstanceId || vm.e2bSandboxId)
 
-    // Only encrypt and store a new key if provided (not using stored key)
-    const encryptedClaudeApiKey = claudeApiKey ? encrypt(claudeApiKey) : undefined
+    // Only encrypt and store new key if provided (not using stored key)
+    const encryptedLlmApiKey = llmApiKey ? encrypt(llmApiKey) : undefined
 
     if (!setupState) {
       setupState = await prisma.setupState.create({
         data: {
           userId: session.user.id,
-          // Only update the key if a new one was provided
-          ...(encryptedClaudeApiKey ? { claudeApiKey: encryptedClaudeApiKey } : {}),
+          // Only update key if new one was provided
+          ...(encryptedLlmApiKey ? { llmApiKey: encryptedLlmApiKey, llmProvider: finalLlmProvider, llmModel: finalLlmModel } : {}),
           status: isVMAlreadyProvisioned ? 'configuring_vm' : 'provisioning',
           // Sync vmCreated from the VM if it's already provisioned
           vmCreated: isVMAlreadyProvisioned ? true : false,
@@ -121,8 +138,8 @@ export async function POST(request: NextRequest) {
       setupState = await prisma.setupState.update({
         where: { id: setupState.id },
         data: {
-          // Only update the key if a new one was provided
-          ...(encryptedClaudeApiKey ? { claudeApiKey: encryptedClaudeApiKey } : {}),
+          // Only update key if new one was provided
+          ...(encryptedLlmApiKey ? { llmApiKey: encryptedLlmApiKey, llmProvider: finalLlmProvider, llmModel: finalLlmModel } : {}),
           status: isVMAlreadyProvisioned ? 'configuring_vm' : 'provisioning',
           errorMessage: null,
           // Only reset vmCreated if the VM hasn't been provisioned yet
@@ -155,7 +172,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Start async setup process based on provider
-    // Note: finalClaudeApiKey is either plaintext from request or decrypted from stored key
     if (vmProvider === 'aws') {
       // Type assertion to access AWS fields
       const awsState = setupState as SetupState & {
@@ -169,14 +185,16 @@ export async function POST(request: NextRequest) {
       const decryptedSecretAccessKey = decrypt(awsState.awsSecretAccessKey!)
       runAWSSetupProcess(
         session.user.id,
-        finalClaudeApiKey,
+        finalLlmApiKey,
+        finalLlmProvider,
+        finalLlmModel,
         decryptedAccessKeyId,
         decryptedSecretAccessKey,
         awsState.awsRegion || 'us-east-1',
         vm?.awsInstanceType || awsState.awsInstanceType || 't3.micro',
         telegramBotToken,
         telegramUserId,
-        vmId // Pass vmId
+        vmId
       ).catch(() => { })
     } else if (vmProvider === 'e2b') {
       // Type assertion to access E2B fields
@@ -185,13 +203,15 @@ export async function POST(request: NextRequest) {
       const decryptedE2bApiKey = decrypt(e2bState.e2bApiKey!)
       runE2BSetupProcess(
         session.user.id,
-        finalClaudeApiKey,
+        finalLlmApiKey,
+        finalLlmProvider,
+        finalLlmModel,
         decryptedE2bApiKey,
         vm?.e2bTemplateId || 'base',
         vm?.e2bTimeout || 3600,
         telegramBotToken,
         telegramUserId,
-        vmId // Pass vmId
+        vmId
       ).catch(() => { })
     } else {
       // Type assertion to access Orgo-specific fields (TypeScript may have stale types cached)
@@ -200,14 +220,16 @@ export async function POST(request: NextRequest) {
       const decryptedOrgoApiKey = decrypt(setupState.orgoApiKey!)
       runSetupProcess(
         session.user.id,
-        finalClaudeApiKey,
+        finalLlmApiKey,
+        finalLlmProvider,
+        finalLlmModel,
         decryptedOrgoApiKey,
         vm?.orgoProjectName || setupState.orgoProjectName || 'claude-brain',
         telegramBotToken,
         telegramUserId,
-        vmId, // Pass vmId
-        orgoVM?.orgoRam || 4, // Pass RAM (default 4 GB)
-        orgoVM?.orgoCpu || 2  // Pass CPU (default 2 cores)
+        vmId,
+        orgoVM?.orgoRam || 4,
+        orgoVM?.orgoCpu || 2
       ).catch(() => { })
     }
 
@@ -228,7 +250,9 @@ export async function POST(request: NextRequest) {
 
 async function runSetupProcess(
   userId: string,
-  claudeApiKey: string,
+  llmApiKey: string,
+  llmProvider: string,
+  llmModel: string,
   orgoApiKey: string,
   projectName: string,
   telegramBotToken?: string,
@@ -463,7 +487,9 @@ async function runSetupProcess(
 
     if (finalTelegramToken) {
       const telegramSuccess = await vmSetup.setupClawdbotTelegram({
-        claudeApiKey,
+        llmApiKey,
+        llmProvider,
+        llmModel,
         telegramBotToken: finalTelegramToken,
         telegramUserId: finalTelegramUserId,
         clawdbotVersion: clawdbotResult.version,
@@ -474,12 +500,13 @@ async function runSetupProcess(
       await updateStatus({ telegramConfigured: telegramSuccess })
 
       if (telegramSuccess) {
-        const gatewaySuccess = await vmSetup.startClawdbotGateway(claudeApiKey, finalTelegramToken)
+        const gatewaySuccess = await vmSetup.startClawdbotGateway({
+          llmApiKey,
+          llmProvider,
+          telegramBotToken: finalTelegramToken,
+        })
         await updateStatus({ gatewayStarted: gatewaySuccess })
       }
-    } else {
-      // Just store Claude API key if no Telegram
-      await vmSetup.storeClaudeKey(claudeApiKey)
     }
 
     // Setup complete!
@@ -499,7 +526,9 @@ async function runSetupProcess(
  */
 async function runAWSSetupProcess(
   userId: string,
-  claudeApiKey: string,
+  llmApiKey: string,
+  llmProvider: string,
+  llmModel: string,
   awsAccessKeyId: string,
   awsSecretAccessKey: string,
   awsRegion: string,
@@ -638,7 +667,9 @@ async function runAWSSetupProcess(
 
     if (finalTelegramToken) {
       const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
-        claudeApiKey,
+        llmApiKey,
+        llmProvider,
+        llmModel,
         telegramBotToken: finalTelegramToken,
         telegramUserId: finalTelegramUserId,
         clawdbotVersion: clawdbotResult.version,
@@ -649,11 +680,13 @@ async function runAWSSetupProcess(
       await updateStatus({ telegramConfigured: telegramSuccess })
 
       if (telegramSuccess) {
-        const gatewaySuccess = await awsVMSetup.startClawdbotGateway(claudeApiKey, finalTelegramToken)
+        const gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+          llmApiKey,
+          llmProvider,
+          telegramBotToken: finalTelegramToken,
+        })
         await updateStatus({ gatewayStarted: gatewaySuccess })
       }
-    } else {
-      await awsVMSetup.storeClaudeKey(claudeApiKey)
     }
 
     // Setup complete!
@@ -692,7 +725,9 @@ async function runAWSSetupProcess(
  */
 async function runE2BSetupProcess(
   userId: string,
-  claudeApiKey: string,
+  llmApiKey: string,
+  llmProvider: string,
+  llmModel: string,
   e2bApiKey: string,
   templateId: string,
   timeout: number,
@@ -806,7 +841,9 @@ async function runE2BSetupProcess(
 
     if (finalTelegramToken) {
       const telegramSuccess = await e2bVMSetup.setupClawdbotTelegram({
-        claudeApiKey,
+        llmApiKey,
+        llmProvider,
+        llmModel,
         telegramBotToken: finalTelegramToken,
         telegramUserId: finalTelegramUserId,
         clawdbotVersion: clawdbotResult.version,
@@ -817,11 +854,13 @@ async function runE2BSetupProcess(
       await updateStatus({ telegramConfigured: telegramSuccess })
 
       if (telegramSuccess) {
-        const gatewaySuccess = await e2bVMSetup.startClawdbotGateway(claudeApiKey, finalTelegramToken)
+        const gatewaySuccess = await e2bVMSetup.startClawdbotGateway({
+          llmApiKey,
+          llmProvider,
+          telegramBotToken: finalTelegramToken,
+        })
         await updateStatus({ gatewayStarted: gatewaySuccess })
       }
-    } else {
-      await e2bVMSetup.storeClaudeKey(claudeApiKey)
     }
 
     // Setup complete!

@@ -234,14 +234,15 @@ function LearningSourcesContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [refreshKey, setRefreshKey] = useState(0)
-  const [claudeApiKey, setClaudeApiKey] = useState('')
+  const [llmApiKey, setLlmApiKey] = useState('')
   const [telegramBotToken, setTelegramBotToken] = useState('')
   const [telegramUserId, setTelegramUserId] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   
-  // Stored Anthropic API key management
+  // Stored LLM API key management
   const [hasStoredApiKey, setHasStoredApiKey] = useState(false)
   const [storedApiKeyMasked, setStoredApiKeyMasked] = useState<string | null>(null)
+  const [storedLlmProvider, setStoredLlmProvider] = useState<string | null>(null)
   const [isEditingApiKey, setIsEditingApiKey] = useState(false)
   const [isDeletingApiKey, setIsDeletingApiKey] = useState(false)
   const [isSavingApiKey, setIsSavingApiKey] = useState(false)
@@ -310,17 +311,19 @@ function LearningSourcesContent() {
     fetchIntegrationStatus()
   }, [fetchIntegrationStatus, refreshKey])
 
-  // Fetch stored Anthropic API key status on mount
+  // Fetch stored API key status on mount (both Anthropic and Kimi)
   const fetchStoredApiKey = useCallback(async () => {
     try {
-      const response = await fetch('/api/setup/anthropic-key')
+      const response = await fetch('/api/setup/model-config')
       if (response.ok) {
         const data = await response.json()
-        setHasStoredApiKey(data.hasKey)
-        setStoredApiKeyMasked(data.maskedKey)
+        // Unified LLM key
+        setHasStoredApiKey(data.hasApiKey || false)
+        setStoredApiKeyMasked(data.maskedKey || null)
+        setStoredLlmProvider(data.provider || null)
         // If user has a stored key and isn't editing, don't show the input
-        if (data.hasKey && !isEditingApiKey) {
-          setClaudeApiKey('') // Clear any manual input
+        if (data.hasApiKey && !isEditingApiKey) {
+          setLlmApiKey('') // Clear any manual input
         }
       }
     } catch (error) {
@@ -334,14 +337,14 @@ function LearningSourcesContent() {
 
   // Handle saving a new API key
   const handleSaveApiKey = async () => {
-    if (!claudeApiKey.trim()) return
+    if (!llmApiKey.trim()) return
     
     setIsSavingApiKey(true)
     try {
-      const response = await fetch('/api/setup/anthropic-key', {
+      const response = await fetch('/api/setup/model-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ claudeApiKey: claudeApiKey.trim() }),
+        body: JSON.stringify({ apiKey: llmApiKey.trim() }),
       })
       
       if (response.ok) {
@@ -372,7 +375,7 @@ function LearningSourcesContent() {
       if (response.ok) {
         setHasStoredApiKey(false)
         setStoredApiKeyMasked(null)
-        setClaudeApiKey('')
+        setLlmApiKey('')
         setIsEditingApiKey(false)
       } else {
         const error = await response.json()
@@ -600,10 +603,15 @@ function LearningSourcesContent() {
   }, [showSetupProgress, addLog])
 
   const handleStartSetup = async () => {
-    // Check if we have either a new key or a stored key
-    const hasKey = claudeApiKey.trim() || hasStoredApiKey
-    if (!hasKey) {
-      setSetupError('Claude API key is required')
+    // Check if we have an LLM API key
+    const hasLlmKey = llmApiKey.trim() || hasStoredApiKey
+    
+    if (!hasLlmKey) {
+      setSetupError('Anthropic API key is required for Claude model')
+      return
+    }
+    if (!hasLlmKey) {
+      setSetupError('Moonshot API key is required for Kimi model')
       return
     }
 
@@ -616,9 +624,9 @@ function LearningSourcesContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Send the new key if provided, otherwise signal to use stored key
-          claudeApiKey: claudeApiKey.trim() || undefined,
-          useStoredApiKey: !claudeApiKey.trim() && hasStoredApiKey,
+          // Send the new keys if provided, otherwise signal to use stored keys
+          llmApiKey: llmApiKey.trim() || undefined,
+          useStoredApiKey: !llmApiKey.trim() && hasStoredApiKey,
           telegramBotToken: telegramBotToken.trim() || undefined,
           telegramUserId: telegramUserId.trim() || undefined,
           vmId, // Pass vmId so the backend updates the correct VM
@@ -636,7 +644,7 @@ function LearningSourcesContent() {
       addLog('info', 'Creating VM...')
 
       // Clear the input
-      setClaudeApiKey('')
+      setLlmApiKey('')
     } catch (e) {
       setSetupError(e instanceof Error ? e.message : 'Something went wrong')
       addLog('error', e instanceof Error ? e.message : 'Failed to start setup')
@@ -827,13 +835,14 @@ function LearningSourcesContent() {
                     <div>
                       <p className="text-green-400 font-medium">VM is ready!</p>
                       <p className="text-green-400/80 text-sm mt-1">
-                        Your VM has been provisioned. Enter your Claude API key below to complete the setup.
+                        Your VM has been provisioned. Enter your API key below to complete the setup.
                       </p>
                     </div>
                   </motion.div>
                 )}
 
                 <h2 className="text-2xl font-display font-bold mb-2">Enter your API Keys</h2>
+                <p className="text-sm text-sam-text-dim mb-4">Choose your AI model and enter the corresponding API key.</p>
 
                 {setupError && (
                   <motion.div
@@ -847,103 +856,55 @@ function LearningSourcesContent() {
                 )}
 
                 <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-mono text-sam-text-dim mb-2">
-                      Claude API Key <span className="text-sam-error">*</span>
-                    </label>
+                  {/* Model Selection Tabs */}
+                  {/* LLM API Key Section */}
+                  <div className="p-4 rounded-lg border border-sam-border bg-sam-bg/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium text-sam-text">LLM API Key <span className="text-sam-error">*</span></label>
+                      {hasStoredApiKey && <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> {storedLlmProvider ? `${storedLlmProvider} configured` : 'Configured'}</span>}
+                    </div>
+                    <p className="text-xs text-sam-text-dim mb-3">Paste your API key from any supported provider. We&apos;ll auto-detect which one it is.</p>
                     
-                    {/* Show stored key with edit/delete options */}
                     {hasStoredApiKey && !isEditingApiKey ? (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-sam-accent/10 border border-sam-accent/30">
-                          <Key className="w-5 h-5 text-sam-accent flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sam-text font-mono text-sm truncate">
-                              {storedApiKeyMasked || 'API key stored'}
-                            </p>
-                            <p className="text-xs text-sam-text-dim mt-0.5">
-                              Your key is securely stored and will be reused across VMs
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setIsEditingApiKey(true)}
-                              className="px-3 py-1.5 text-xs font-mono text-sam-text-dim hover:text-sam-text border border-sam-border hover:border-sam-accent/50 rounded-lg transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleDeleteApiKey}
-                              disabled={isDeletingApiKey}
-                              className="px-3 py-1.5 text-xs font-mono text-sam-error/70 hover:text-sam-error border border-sam-error/30 hover:border-sam-error/50 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                              {isDeletingApiKey ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg bg-sam-accent/10 border border-sam-accent/30">
+                        <Key className="w-5 h-5 text-sam-accent flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sam-text font-mono text-sm truncate">
+                            {storedApiKeyMasked || 'API key stored'}
+                          </p>
+                          <p className="text-xs text-sam-text-dim mt-0.5">
+                            Your key is securely stored and will be reused across VMs
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => setIsEditingApiKey(true)} className="px-3 py-1.5 text-xs font-mono text-sam-text-dim hover:text-sam-text border border-sam-border hover:border-sam-accent/50 rounded-lg transition-colors">
+                            Edit
+                          </button>
+                          <button type="button" onClick={handleDeleteApiKey} disabled={isDeletingApiKey} className="px-3 py-1.5 text-xs font-mono text-sam-error/70 hover:text-sam-error border border-sam-error/30 hover:border-sam-error/50 rounded-lg transition-colors disabled:opacity-50">
+                            {isDeletingApiKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                          </button>
                         </div>
                       </div>
                     ) : (
-                      /* Show input field when no key is stored or when editing */
                       <div className="space-y-3">
-                    <div className="relative">
-                      <input
-                        type="password"
-                        value={claudeApiKey}
-                        onChange={(e) => setClaudeApiKey(e.target.value)}
-                        placeholder="sk-ant-api03-..."
-                        className="w-full px-4 py-3 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent outline-none font-mono text-sm transition-colors"
-                      />
-                    </div>
-                        
-                        {/* Show save/cancel buttons when editing */}
+                        <input
+                          type="password"
+                          value={llmApiKey}
+                          onChange={(e) => setLlmApiKey(e.target.value)}
+                          placeholder="Paste your API key..."
+                          className="w-full px-4 py-3 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent outline-none font-mono text-sm transition-colors"
+                        />
                         {isEditingApiKey && (
                           <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={handleSaveApiKey}
-                              disabled={isSavingApiKey || !claudeApiKey.trim()}
-                              className="px-4 py-2 text-xs font-mono bg-sam-accent text-sam-bg rounded-lg hover:bg-sam-accent-dim disabled:opacity-50 transition-colors flex items-center gap-2"
-                            >
-                              {isSavingApiKey ? (
-                                <>
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                  Saving...
-                                </>
-                              ) : (
-                                <>
-                                  <Check className="w-3 h-3" />
-                                  Save Key
-                                </>
-                              )}
+                            <button type="button" onClick={handleSaveApiKey} disabled={isSavingApiKey || !llmApiKey.trim()} className="px-4 py-2 text-xs font-mono bg-sam-accent text-sam-bg rounded-lg hover:bg-sam-accent-dim disabled:opacity-50 transition-colors flex items-center gap-2">
+                              {isSavingApiKey ? <><Loader2 className="w-3 h-3 animate-spin" />Saving...</> : <><Check className="w-3 h-3" />Save Key</>}
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsEditingApiKey(false)
-                                setClaudeApiKey('')
-                              }}
-                              className="px-4 py-2 text-xs font-mono text-sam-text-dim hover:text-sam-text border border-sam-border hover:border-sam-accent/50 rounded-lg transition-colors"
-                            >
-                              Cancel
-                            </button>
+                            <button type="button" onClick={() => { setIsEditingApiKey(false); setLlmApiKey('') }} className="px-4 py-2 text-xs font-mono text-sam-text-dim hover:text-sam-text border border-sam-border hover:border-sam-accent/50 rounded-lg transition-colors">Cancel</button>
                           </div>
                         )}
-                        
-                    <a
-                      href="https://console.anthropic.com/settings/keys"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-sam-accent hover:underline"
-                    >
-                      Get your key from Anthropic Console
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                        <p className="text-xs text-sam-text-dim">
+                          Supports: OpenRouter, Anthropic, OpenAI, Google, Groq, xAI, Perplexity, Fireworks, Cohere
+                        </p>
                       </div>
                     )}
                   </div>
@@ -987,7 +948,7 @@ function LearningSourcesContent() {
 
                 <button
                   onClick={handleStartSetup}
-                  disabled={isSubmitting || (!claudeApiKey.trim() && !hasStoredApiKey) || !telegramBotToken.trim() || !telegramUserId.trim()}
+                  disabled={isSubmitting || (!llmApiKey.trim() && !hasStoredApiKey) || !telegramBotToken.trim() || !telegramUserId.trim()}
                   className="mt-8 w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-sam-accent text-sam-bg font-display font-semibold hover:bg-sam-accent-dim disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   {isSubmitting ? (

@@ -29,12 +29,17 @@ export async function POST(request: NextRequest) {
       where: { userId: session.user.id },
     })
 
-    // Get Claude API key from setup state and decrypt
-    const claudeApiKeyEncrypted = setupState?.claudeApiKey
-    if (!claudeApiKeyEncrypted) {
-      return NextResponse.json({ error: 'Claude API key not found' }, { status: 400 })
+    // Get LLM config from setup state and decrypt
+    const llmApiKeyEncrypted = setupState?.llmApiKey
+    const llmProvider = setupState?.llmProvider
+    const llmModel = setupState?.llmModel
+    
+    // LLM API key must be available
+    if (!llmApiKeyEncrypted || !llmProvider || !llmModel) {
+      return NextResponse.json({ error: 'LLM API key not configured' }, { status: 400 })
     }
-    const claudeApiKey = decrypt(claudeApiKeyEncrypted)
+    
+    const llmApiKey = decrypt(llmApiKeyEncrypted)
 
     // If vmId is provided, configure that specific VM
     if (vmId) {
@@ -73,7 +78,9 @@ export async function POST(request: NextRequest) {
         const vmSetup = new VMSetup(orgoClient, vm.orgoComputerId)
 
         telegramSuccess = await vmSetup.setupClawdbotTelegram({
-          claudeApiKey,
+          llmApiKey,
+          llmProvider,
+          llmModel,
           telegramBotToken,
           telegramUserId,
           clawdbotVersion,
@@ -81,7 +88,11 @@ export async function POST(request: NextRequest) {
         })
 
         if (telegramSuccess) {
-          gatewaySuccess = await vmSetup.startClawdbotGateway(claudeApiKey, telegramBotToken)
+          gatewaySuccess = await vmSetup.startClawdbotGateway({
+            llmApiKey,
+            llmProvider,
+            telegramBotToken,
+          })
         }
       } else if (vm.provider === 'aws') {
         // For AWS, we need to get the credentials from setupState
@@ -109,7 +120,9 @@ export async function POST(request: NextRequest) {
         )
 
         telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
-          claudeApiKey,
+          llmApiKey,
+          llmProvider,
+          llmModel,
           telegramBotToken,
           telegramUserId,
           clawdbotVersion,
@@ -117,7 +130,11 @@ export async function POST(request: NextRequest) {
         })
 
         if (telegramSuccess) {
-          gatewaySuccess = await awsVMSetup.startClawdbotGateway(claudeApiKey, telegramBotToken)
+          gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+            llmApiKey,
+            llmProvider,
+            telegramBotToken,
+          })
         }
 
         awsVMSetup.cleanup()
@@ -136,7 +153,9 @@ export async function POST(request: NextRequest) {
         const e2bVMSetup = new E2BVMSetup(e2bClient, sandbox, vm.e2bSandboxId)
 
         telegramSuccess = await e2bVMSetup.setupClawdbotTelegram({
-          claudeApiKey,
+          llmApiKey,
+          llmProvider,
+          llmModel,
           telegramBotToken,
           telegramUserId,
           clawdbotVersion,
@@ -144,7 +163,11 @@ export async function POST(request: NextRequest) {
         })
 
         if (telegramSuccess) {
-          gatewaySuccess = await e2bVMSetup.startClawdbotGateway(claudeApiKey, telegramBotToken)
+          gatewaySuccess = await e2bVMSetup.startClawdbotGateway({
+            llmApiKey,
+            llmProvider,
+            telegramBotToken,
+          })
         }
       } else {
         return NextResponse.json({ error: `Unsupported provider: ${vm.provider}` }, { status: 400 })
@@ -219,7 +242,9 @@ export async function POST(request: NextRequest) {
 
     // Configure Telegram
     const telegramSuccess = await vmSetup.setupClawdbotTelegram({
-      claudeApiKey,
+      llmApiKey,
+      llmProvider,
+      llmModel,
       telegramBotToken,
       telegramUserId,
       clawdbotVersion,
@@ -237,7 +262,11 @@ export async function POST(request: NextRequest) {
     })
 
     // Start the gateway
-    const gatewaySuccess = await vmSetup.startClawdbotGateway(claudeApiKey, telegramBotToken)
+    const gatewaySuccess = await vmSetup.startClawdbotGateway({
+      llmApiKey,
+      llmProvider,
+      telegramBotToken,
+    })
 
     await prisma.setupState.update({
       where: { userId: session.user.id },

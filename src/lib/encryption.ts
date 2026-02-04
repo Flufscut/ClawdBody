@@ -245,7 +245,7 @@ export function decryptFields<T extends Record<string, any>>(
  * List of sensitive fields in SetupState that should be encrypted
  */
 export const SETUP_STATE_SENSITIVE_FIELDS = [
-  'claudeApiKey',
+  'llmApiKey',
   'orgoApiKey',
   'awsAccessKeyId',
   'awsSecretAccessKey',

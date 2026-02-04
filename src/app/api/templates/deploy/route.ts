@@ -21,7 +21,7 @@ interface DeployRequest {
   orgoProjectId?: string
   orgoProjectName?: string
   // Setup credentials (to start setup immediately after VM creation)
-  claudeApiKey?: string
+  llmApiKey?: string
   useStoredApiKey?: boolean
 }
 
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<DeployRes
     }
 
     const body: DeployRequest = await request.json()
-    const { templateId, agentName, ram, orgoProjectId, orgoProjectName, claudeApiKey, useStoredApiKey } = body
+    const { templateId, agentName, ram, orgoProjectId, orgoProjectName, llmApiKey, useStoredApiKey } = body
 
     // Validate required fields
     if (!templateId || !agentName || !ram) {
@@ -327,13 +327,13 @@ fi
 
     console.log(`[Deploy] VM record created: ${vm.id}`)
 
-    // === Step 7.25: Trigger setup if Anthropic API key provided (Telegram can be configured later) ===
-    const hasSetupCredentials = claudeApiKey || useStoredApiKey
+    // === Step 7.25: Trigger setup if API key provided (Telegram can be configured later) ===
+    const hasSetupCredentials = llmApiKey || useStoredApiKey
     if (hasSetupCredentials) {
       console.log(`[Deploy] Triggering setup for VM ${vm.id}...`)
       
       const setupPayload = {
-        claudeApiKey: claudeApiKey || undefined,
+        llmApiKey: llmApiKey || undefined,
         useStoredApiKey: useStoredApiKey || false,
         vmId: vm.id,
       }
