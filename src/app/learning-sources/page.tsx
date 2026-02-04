@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useSession, signOut } from 'next-auth/react'
 import { motion } from 'framer-motion'
-import { Mail, Calendar, MessageSquare, FileText, MessageCircle, Bot, Video, Phone, Loader2, RefreshCw, Check, Key, AlertCircle, ArrowRight, ExternalLink, LogOut, Github, X, Server, GitBranch, Terminal, CheckCircle2, ChevronDown, ChevronUp, Trash2, XCircle, Monitor } from 'lucide-react'
+import { Mail, Calendar, MessageSquare, FileText, MessageCircle, Bot, Video, Phone, Loader2, RefreshCw, Check, Key, AlertCircle, ArrowRight, ExternalLink, LogOut, Github, X, Server, GitBranch, Terminal, CheckCircle2, ChevronDown, ChevronUp, Trash2, XCircle, Monitor, Crown } from 'lucide-react'
 import { WebTerminal } from '@/components/WebTerminal'
 import { OrgoTerminal } from '@/components/OrgoTerminal'
 import { E2BTerminal } from '@/components/E2BTerminal'
@@ -254,6 +254,7 @@ function LearningSourcesContent() {
   const [isCheckingRedirect, setIsCheckingRedirect] = useState(true) // Track if we're checking for redirect
   const [connectedSources, setConnectedSources] = useState<Set<string>>(new Set())
   const [currentVM, setCurrentVM] = useState<VMInfo | null>(null)
+  const [userPlan, setUserPlan] = useState<string | null>(null)
   const [allVMs, setAllVMs] = useState<VMInfo[]>([])
 
   // Get vmId from URL params
@@ -334,6 +335,18 @@ function LearningSourcesContent() {
   useEffect(() => {
     fetchStoredApiKey()
   }, [fetchStoredApiKey])
+
+  // Fetch user plan for Pro badge
+  useEffect(() => {
+    fetch('/api/user/plan')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.plan?.id) {
+          setUserPlan(data.plan.id)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // Handle saving a new API key
   const handleSaveApiKey = async () => {
@@ -699,6 +712,19 @@ function LearningSourcesContent() {
                 <span className="text-sam-text font-medium">{currentVM.name}</span>
                 <span className="text-sam-text-dim">({currentVM.provider})</span>
               </motion.div>
+            )}
+            {userPlan === 'pro' && (
+              <Link href="/billing">
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.6 }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-400/80 hover:bg-amber-500/10 transition-all cursor-pointer"
+                >
+                  <Crown className="w-4 h-4" />
+                  <span className="text-sm font-mono">Pro</span>
+                </motion.div>
+              </Link>
             )}
             <Link href="/select-vm" prefetch={true}>
               <motion.div

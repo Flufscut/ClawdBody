@@ -126,8 +126,9 @@ export class OrgoClient {
   }
 
   /**
-   * Create a new computer (VM) within a project
-   * Uses POST /computers with project_id in the body
+   * Create a new computer (VM) within a project/workspace
+   * Uses POST /computers with workspace_id in the body
+   * Note: workspace_id is the same as project_id in Orgo's API
    */
   async createComputer(
     projectId: string,
@@ -138,8 +139,12 @@ export class OrgoClient {
       cpu?: 1 | 2 | 4 | 8 | 16
     } = {}
   ): Promise<OrgoComputer> {
+    if (!projectId) {
+      throw new Error('workspace_id (project_id) is required to create a computer')
+    }
+
     const requestBody = {
-      project_id: projectId,
+      workspace_id: projectId, // Orgo API now requires workspace_id instead of project_id
       name: computerName,
       os: options.os || 'linux',
       ram: options.ram || 4,

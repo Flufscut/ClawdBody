@@ -6,6 +6,7 @@ import { OrgoClient, sanitizeName } from '@/lib/orgo'
 import { AWSClient } from '@/lib/aws'
 import { E2BClient } from '@/lib/e2b'
 import { decrypt, encrypt } from '@/lib/encryption'
+import { canCreateVM } from '@/lib/plans'
 
 /**
  * GET /api/vms - List all VMs for the current user
@@ -192,6 +193,17 @@ export async function POST(request: NextRequest) {
 
     if (!['orgo', 'aws', 'flyio', 'e2b'].includes(provider)) {
       return NextResponse.json({ error: 'Invalid provider' }, { status: 400 })
+    }
+
+    // Check VM limit for user's plan
+    const vmCheck = await canCreateVM(session.user.id)
+    if (!vmCheck.allowed) {
+      return NextResponse.json({ 
+        error: vmCheck.reason,
+        code: 'VM_LIMIT_REACHED',
+        upgradeRequired: vmCheck.upgradeRequired,
+        suggestedPlan: vmCheck.suggestedPlan,
+      }, { status: 403 })
     }
 
     // Sanitize the user's name for cloud provider compatibility

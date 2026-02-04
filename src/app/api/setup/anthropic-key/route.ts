@@ -80,14 +80,14 @@ export async function PUT(request: NextRequest) {
 
     // Detect provider from key prefix
     let provider = 'anthropic'
-    let defaultModel = 'claude-sonnet-4-5'
+    let defaultModel = 'anthropic/claude-sonnet-4-5'
     
     if (apiKey.startsWith('sk-or-')) {
       provider = 'openrouter'
-      defaultModel = 'anthropic/claude-3.5-sonnet'
+      defaultModel = 'openrouter/anthropic/claude-3.5-sonnet'
     } else if (apiKey.startsWith('sk-ant-')) {
       provider = 'anthropic'
-      defaultModel = 'claude-sonnet-4-5'
+      defaultModel = 'anthropic/claude-sonnet-4-5'
     } else if (apiKey.startsWith('sk-')) {
       provider = 'openai'
       defaultModel = 'gpt-4o'

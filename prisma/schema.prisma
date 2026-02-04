@@ -48,6 +48,28 @@ model User {
   vms           VM[]
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+
+  // Plan & billing
+  plan                    String    @default("free") // legacy_free, free, starter, pro
+  legacyBucket            String?   // A, B, C, D (null for new users)
+  isLegacyUser            Boolean   @default(false)
+  legacyCutoffAt          DateTime? // When they were marked as legacy
+
+  // Stripe
+  stripeCustomerId        String?   @unique
+  stripeSubscriptionId    String?   @unique
+  stripePriceId           String?
+  stripeCurrentPeriodEnd  DateTime?
+
+  // Early adopter discount
+  earlyAdopterDiscount    Int?      // Percentage off (50 = 50% off)
+  earlyAdopterExpiresAt   DateTime? // null = lifetime discount
+
+  // Onboarding tracking
+  onboardingCompletedAt   DateTime? // When user completed/dismissed pricing onboarding (null = not seen)
+
+  // Usage tracking (for metered billing)
+  usageRecords            UsageRecord[]
 }
 
 model VerificationToken {
@@ -285,4 +307,29 @@ model TemplateEvent {
   @@index([userId])
   @@index([eventType])
   @@index([createdAt])
+}
+
+// Usage tracking for metered billing (LLM tokens, VM hours)
+model UsageRecord {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type        String    // "llm_tokens", "vm_hours"
+  quantity    Int       // Token count or minutes
+  provider    String?   // "anthropic", "openai", "orgo", "aws", "e2b"
+  model       String?   // "claude-sonnet-4", "claude-3-5-sonnet", etc.
+  
+  // Cost tracking
+  costCents   Int?      // Cost in cents (provider cost)
+  priceCents  Int?      // Price charged to user (with markup)
+  
+  // Billing status
+  billedAt    DateTime?
+  stripeUsageRecordId String?
+
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, type, createdAt])
+  @@index([userId, billedAt])
 }

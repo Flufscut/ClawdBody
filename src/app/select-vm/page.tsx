@@ -2,11 +2,48 @@
 
 import { useState, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, Sparkles, PenTool, User, Lightbulb, Share2, Link2, Check } from 'lucide-react'
+import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, Sparkles, PenTool, User, Lightbulb, Share2, Link2, Check, CreditCard, Crown } from 'lucide-react'
 import type { Template, TemplateIdea } from '@/lib/templates'
 import { TEMPLATE_IDEAS, isEmojiLogo } from '@/lib/templates'
+import { UpsellBanner } from '@/components/upsell-banner'
+import { PaywallModal } from '@/components/paywall-modal'
+
+// Plan info type
+interface PlanInfo {
+  plan: {
+    id: string
+    name: string
+    priceMonthly: number
+    features: {
+      maxVMs: number | 'unlimited'
+      maxRamGB: number
+      createTemplates: boolean
+    }
+  }
+  isLegacyUser: boolean
+  bucket: string | null
+  currentBucket: string | null
+  earlyAdopterDiscount: number | null
+  upsell: {
+    showBanner: boolean
+    bannerType: 'managed_upgrade' | 'llm_toggle' | 'vm_upgrade' | 'get_started' | null
+    headline: string
+    description: string
+    ctaText: string
+    discount?: number
+    discountLabel?: string
+  } | null
+  limits: {
+    vms: { current: number; max: number | 'unlimited' }
+    maxRamGB: number
+  }
+  keys: {
+    hasVMKey: boolean
+    hasLLMKey: boolean
+  }
+}
 
 type VMProvider = 'orgo' | 'e2b' | 'moltworker' | 'flyio' | 'aws' | 'railway' | 'digitalocean' | 'hetzner' | 'modal'
 
@@ -223,6 +260,8 @@ const vmOptions: VMOption[] = [
 export default function SelectVMPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const justCompletedCheckout = searchParams.get('welcome') === 'pro'
 
   // VM list state
   const [userVMs, setUserVMs] = useState<UserVM[]>([])
@@ -230,8 +269,14 @@ export default function SelectVMPage() {
   const [isLoadingVMs, setIsLoadingVMs] = useState(true)
   const [deletingVMId, setDeletingVMId] = useState<string | null>(null)
 
+  // Plan & billing state
+  const [planInfo, setPlanInfo] = useState<PlanInfo | null>(null)
+  const [showPaywallModal, setShowPaywallModal] = useState(false)
+  const [paywallFeature, setPaywallFeature] = useState<'template_creation' | 'vm_limit' | 'ram_limit'>('template_creation')
+
   // General state
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [deployingProvider, setDeployingProvider] = useState<VMProvider | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // LLM API key state (unified across all providers)
@@ -378,8 +423,29 @@ export default function SelectVMPage() {
     if (session?.user?.id) {
       loadVMs()
       loadTemplates()
+      // Fetch plan info for billing context and check if onboarding needed
+      fetch('/api/user/plan')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            setPlanInfo(data)
+            // Redirect to onboarding if user hasn't completed it yet
+            // Skip if they have a paid plan, have keys, already completed onboarding,
+            // or just completed checkout (webhook may not have fired yet)
+            const hasPaidPlan = data.plan?.id === 'pro'
+            const hasVMKey = data.keys?.hasVMKey === true
+            const hasLLMKey = data.keys?.hasLLMKey === true
+            const onboardingCompleted = data.onboardingCompleted === true
+            
+            if (!hasPaidPlan && !hasVMKey && !hasLLMKey && !onboardingCompleted && !justCompletedCheckout) {
+              // User needs to complete onboarding
+              router.push('/onboarding')
+            }
+          }
+        })
+        .catch(console.error)
     }
-  }, [session?.user?.id])
+  }, [session?.user?.id, router, justCompletedCheckout])
 
   const loadVMs = async () => {
     setIsLoadingVMs(true)
@@ -864,6 +930,58 @@ export default function SelectVMPage() {
     }
 
     if (provider === 'orgo') {
+      // Check if user is Pro - if so, auto-deploy directly
+      const isPro = planInfo?.plan.id === 'pro'
+      
+      if (isPro) {
+        // Auto-deploy for Pro users
+        setIsSubmitting(true)
+        setDeployingProvider('orgo')
+        setError(null)
+        
+        try {
+          const res = await fetch('/api/setup/orgo/auto-deploy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          })
+          
+          const data = await res.json()
+          
+          if (!res.ok) {
+            throw new Error(data.error || 'Failed to deploy VM')
+          }
+          
+          // Start setup process
+          if (data.vm?.id) {
+            await fetch('/api/setup/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                useStoredApiKey: true,
+                vmId: data.vm.id,
+              }),
+            })
+          }
+          
+          // Refresh VM list and redirect to the new VM
+          await loadVMs()
+          if (data.vm?.id) {
+            // Keep deployingProvider set during redirect
+            router.push(`/learning-sources?vm=${data.vm.id}`)
+          } else {
+            // No VM ID, clear deployment state
+            setDeployingProvider(null)
+          }
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Failed to deploy VM')
+          setDeployingProvider(null)
+        } finally {
+          setIsSubmitting(false)
+        }
+        return
+      }
+      
+      // Non-Pro users: show normal modal
       setOrgoVMName(`Orgo VM ${userVMs.filter(vm => vm.provider === 'orgo').length + 1}`)
       setOrgoError(null)
 
@@ -1108,6 +1226,14 @@ export default function SelectVMPage() {
       const data = await res.json()
 
       if (!res.ok) {
+        // Check if this is a VM limit error - show paywall
+        if (data.code === 'VM_LIMIT_REACHED') {
+          closeOrgoModal()
+          setPaywallFeature('vm_limit')
+          setShowPaywallModal(true)
+          setIsSubmitting(false)
+          return
+        }
         // Check if this is a plan upgrade error
         if (data.needsUpgrade) {
           setOrgoError(data.error)
@@ -1278,6 +1404,14 @@ export default function SelectVMPage() {
       const data = await res.json()
 
       if (!res.ok) {
+        // Check if this is a VM limit error - show paywall
+        if (data.code === 'VM_LIMIT_REACHED') {
+          closeAWSModal()
+          setPaywallFeature('vm_limit')
+          setShowPaywallModal(true)
+          setIsSubmitting(false)
+          return
+        }
         throw new Error(data.error || 'Failed to provision EC2 instance')
       }
 
@@ -1389,6 +1523,14 @@ export default function SelectVMPage() {
       const data = await res.json()
 
       if (!res.ok) {
+        // Check if this is a VM limit error - show paywall
+        if (data.code === 'VM_LIMIT_REACHED') {
+          closeE2BModal()
+          setPaywallFeature('vm_limit')
+          setShowPaywallModal(true)
+          setIsSubmitting(false)
+          return
+        }
         // Check if this is a plan upgrade error
         if (data.needsUpgrade) {
           setE2bError(data.error)
@@ -1502,16 +1644,38 @@ export default function SelectVMPage() {
               </span>
             )}
           </motion.div>
-          <motion.button
+          <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6 }}
+            className="flex items-center gap-3"
+          >
+            {/* Plan badge & billing link */}
+            <button
+              onClick={() => router.push('/billing')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
+                planInfo?.plan.id === 'pro'
+                  ? 'border-sam-border/50 bg-sam-surface/30 text-sam-text-dim hover:bg-sam-surface/50 hover:text-sam-text'
+                  : 'border-sam-border hover:border-sam-accent/50 text-sam-text-dim hover:text-sam-text'
+              }`}
+            >
+              {planInfo?.plan.id === 'pro' ? (
+                <Crown className="w-4 h-4" />
+              ) : (
+                <CreditCard className="w-4 h-4" />
+              )}
+              <span className="text-sm font-mono">
+                {planInfo?.plan.id === 'pro' ? 'Pro' : (planInfo?.plan.name || 'Free')}
+              </span>
+            </button>
+            <button
             onClick={() => signOut({ callbackUrl: '/' })}
             className="flex items-center gap-2 px-4 py-2 rounded-lg border border-sam-border hover:border-sam-error/50 text-sam-text-dim hover:text-sam-error transition-all"
           >
             <LogOut className="w-4 h-4" />
             <span className="text-sm font-mono">Sign out</span>
-          </motion.button>
+            </button>
+          </motion.div>
         </div>
 
         {/* Header */}
@@ -1529,6 +1693,28 @@ export default function SelectVMPage() {
           </p>
         </motion.div>
 
+        {/* Deployment Status Banner */}
+        {deployingProvider && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-6 p-4 rounded-xl border border-sam-accent/30 bg-sam-accent/5 backdrop-blur-sm"
+          >
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 text-sam-accent animate-spin" />
+              <div className="flex-1">
+                <p className="text-sm font-mono text-sam-accent font-semibold">
+                  Deploying...
+                </p>
+                <p className="text-xs text-sam-text-dim mt-1">
+                  Creating your VM and setting up the environment. This may take a minute.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* Error Message */}
         {error && (
           <motion.div
@@ -1537,10 +1723,44 @@ export default function SelectVMPage() {
             className="mb-6 p-4 rounded-lg bg-sam-error/10 border border-sam-error/30 flex items-start gap-3"
           >
             <AlertCircle className="w-5 h-5 text-sam-error flex-shrink-0 mt-0.5" />
-            <p className="text-sam-error text-sm">{error}</p>
+            <div className="flex-1">
+              <p className="text-sam-error text-sm font-semibold mb-1">Deployment Failed</p>
+              <p className="text-sam-error/80 text-xs whitespace-pre-line">{error}</p>
+            </div>
             <button onClick={() => setError(null)} className="ml-auto text-sam-error hover:text-sam-error/80">
               <X className="w-4 h-4" />
             </button>
+          </motion.div>
+        )}
+
+        {/* Upsell Banner for Legacy Users */}
+        {planInfo?.upsell?.showBanner && planInfo.upsell.bannerType && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <UpsellBanner
+              type={planInfo.upsell.bannerType}
+              headline={planInfo.upsell.headline}
+              description={planInfo.upsell.description}
+              ctaText={planInfo.upsell.ctaText}
+              discount={planInfo.upsell.discount}
+              discountLabel={planInfo.upsell.discountLabel}
+              onUpgrade={() => {
+                fetch('/api/stripe/checkout', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ plan: 'pro', applyDiscount: planInfo.isLegacyUser }),
+                })
+                  .then(res => res.json())
+                  .then(data => {
+                    if (data.url) window.location.href = data.url
+                  })
+                  .catch(console.error)
+              }}
+              variant="banner"
+            />
           </motion.div>
         )}
 
@@ -1549,7 +1769,7 @@ export default function SelectVMPage() {
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-sam-accent" />
           </div>
-        ) : userVMs.length > 0 && (
+        ) : userVMs.length > 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1561,6 +1781,25 @@ export default function SelectVMPage() {
                 <Server className="w-5 h-5 text-sam-accent" />
                 Active VMs ({userVMs.length})
               </h2>
+              {planInfo?.plan.id === 'pro' && (
+                <button
+                  onClick={() => handleProviderClick('orgo')}
+                  disabled={isSubmitting || deployingProvider === 'orgo'}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sam-accent/10 border border-sam-accent/30 text-sam-accent hover:bg-sam-accent/20 hover:border-sam-accent/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  {deployingProvider === 'orgo' ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Deploying...
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-4 h-4" />
+                      Deploy OpenClaw
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1636,7 +1875,48 @@ export default function SelectVMPage() {
               ))}
             </div>
           </motion.div>
-        )}
+        ) : planInfo?.plan.id === 'pro' ? (
+          // Pro users with no VMs - show quick start card
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            className="mb-8"
+          >
+            <div className="p-8 rounded-xl border-2 border-sam-accent/30 bg-gradient-to-br from-sam-accent/5 to-sam-accent/10 backdrop-blur-sm">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="flex-1 text-center md:text-left">
+                  <div className="flex items-center justify-center md:justify-start gap-3 mb-3">
+                    <Rocket className="w-8 h-8 text-sam-accent" />
+                    <h2 className="text-2xl font-display font-semibold text-sam-text">
+                      Get Started with OpenClaw
+                    </h2>
+                  </div>
+                  <p className="text-sam-text-dim mb-4 max-w-2xl">
+                    No setup required. We'll handle everything for you.
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleProviderClick('orgo')}
+                  disabled={isSubmitting || deployingProvider === 'orgo'}
+                  className="flex items-center gap-3 px-6 py-4 rounded-lg bg-sam-accent border border-sam-accent/50 text-white hover:bg-sam-accent/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium text-base shadow-lg shadow-sam-accent/20"
+                >
+                  {deployingProvider === 'orgo' ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Deploying...
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-5 h-5" />
+                      Deploy OpenClaw
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
 
         {/* Template Marketplace Section */}
         <motion.div
@@ -1661,7 +1941,7 @@ export default function SelectVMPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sam-accent/10 border border-sam-accent/30 text-sam-accent text-sm font-medium hover:bg-sam-accent/20 hover:border-sam-accent/50 transition-all"
               >
                 <PenTool className="w-4 h-4" />
-                Create Your Own
+                Create Your Template
               </button>
             </div>
           </div>
@@ -1870,12 +2150,18 @@ export default function SelectVMPage() {
         >
           <h2 className="text-xl font-display font-semibold text-sam-text mb-4 flex items-center gap-2">
             <Plus className="w-5 h-5 text-sam-accent" />
-            Add a New VM
+            VM Providers
           </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {vmOptions.map((option, index) => {
               const isDisabled = !option.available || isSubmitting
+              const isPro = planInfo?.plan?.id === 'pro'
+              const isManagedProvider = isPro && option.id === 'orgo' && credentials?.hasOrgoApiKey
+              const hasCredentials = (option.id === 'orgo' && credentials?.hasOrgoApiKey) ||
+                (option.id === 'aws' && credentials?.hasAwsCredentials) ||
+                (option.id === 'e2b' && credentials?.hasE2bApiKey)
+              const isDeploying = deployingProvider === option.id
 
               return (
                 <motion.button
@@ -1887,37 +2173,77 @@ export default function SelectVMPage() {
                   disabled={isDisabled}
                   className={`relative p-5 rounded-xl border transition-all duration-300 text-left ${isDisabled
                     ? 'border-sam-border bg-sam-surface/30 opacity-60 cursor-not-allowed'
+                    : isManagedProvider
+                    ? 'border-amber-500/50 bg-amber-500/5 hover:border-amber-500/70 hover:bg-amber-500/10 cursor-pointer ring-1 ring-amber-500/20'
                     : 'border-sam-border bg-sam-surface/30 hover:border-sam-accent/50 hover:bg-sam-surface/40 cursor-pointer'
-                    }`}
+                    } ${isDeploying ? 'ring-2 ring-sam-accent/50' : ''}`}
                 >
+                  {/* Loading overlay for deploying provider */}
+                  {isDeploying && (
+                    <div className="absolute inset-0 rounded-xl bg-sam-bg/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-3">
+                      <Loader2 className="w-8 h-8 text-sam-accent animate-spin" />
+                      <p className="text-sm font-mono text-sam-accent">Deploying VM...</p>
+                      <p className="text-xs text-sam-text-dim">Please wait</p>
+                    </div>
+                  )}
+
+                  {/* Managed Pro badge */}
+                  {isManagedProvider && !isDeploying && (
+                    <div className="absolute top-3 right-3">
+                      <span className="text-[10px] font-mono text-amber-400 bg-amber-500/20 px-2 py-1 rounded-full flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Managed • Ready
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Quick add indicator for non-managed configured providers */}
+                  {option.available && hasCredentials && !isManagedProvider && (
+                    <div className="absolute top-3 right-3">
+                      <span className="text-[10px] font-mono text-sam-accent bg-sam-accent/10 px-1.5 py-0.5 rounded">
+                        Quick Add
+                      </span>
+                    </div>
+                  )}
+
                   {/* Icon */}
-                  <div className="flex items-center justify-center mb-4 h-14">
+                  <div className={`flex items-center justify-center mb-4 h-14 ${isDeploying ? 'opacity-30' : ''}`}>
                     {option.icon}
                   </div>
 
                   {/* Name and Badge */}
-                  <div className="flex items-center justify-between mb-2">
+                  <div className={`flex items-center justify-between mb-2 ${isDeploying ? 'opacity-30' : ''}`}>
                     <h3 className="text-lg font-display font-semibold text-sam-text">
                       {option.name}
                     </h3>
                   </div>
-                  {option.comingSoon && (
+                  {!isDeploying && option.comingSoon && (
                     <span className="inline-block text-xs font-mono text-sam-text-dim bg-sam-surface px-2 py-0.5 rounded mb-2">
                       Coming Soon
                     </span>
                   )}
-                  {option.available && (
+                  {!isDeploying && option.available && !isManagedProvider && (
                     <span className="inline-block text-xs font-mono text-green-400 bg-green-400/10 px-2 py-0.5 rounded mb-2">
                       Available
                     </span>
                   )}
+                  {!isDeploying && isManagedProvider && (
+                    <span className="inline-block text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded mb-2">
+                      ✨ Included with Pro
+                    </span>
+                  )}
 
                   {/* Description */}
+                  {!isDeploying && (
                   <p className="text-sm text-sam-text-dim font-body leading-relaxed mb-3">
-                    {option.description}
+                      {isManagedProvider 
+                        ? 'Your managed VM provider is ready to use. No additional setup required!'
+                        : option.description}
                   </p>
+                  )}
 
                   {/* Learn More Link */}
+                  {!isDeploying && (
                   <a
                     href={option.url}
                     target="_blank"
@@ -1925,21 +2251,9 @@ export default function SelectVMPage() {
                     onClick={(e) => e.stopPropagation()}
                     className="inline-flex items-center gap-1 text-sm text-sam-accent hover:text-sam-accent/80 transition-colors font-mono"
                   >
-                    Learn more
+                      {isManagedProvider ? 'Launch VM' : 'Learn more'}
                     <ArrowRight className="w-3 h-3" />
                   </a>
-
-                  {/* Quick add indicator for configured providers */}
-                  {option.available && (
-                    (option.id === 'orgo' && credentials?.hasOrgoApiKey) ||
-                    (option.id === 'aws' && credentials?.hasAwsCredentials) ||
-                    (option.id === 'e2b' && credentials?.hasE2bApiKey)
-                  ) && (
-                      <div className="absolute top-3 right-3">
-                        <span className="text-[10px] font-mono text-sam-accent bg-sam-accent/10 px-1.5 py-0.5 rounded">
-                          Quick Add
-                        </span>
-                      </div>
                     )}
                 </motion.button>
               )
@@ -4254,6 +4568,15 @@ export default function SelectVMPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Paywall Modal */}
+      <PaywallModal
+        isOpen={showPaywallModal}
+        onClose={() => setShowPaywallModal(false)}
+        feature={paywallFeature}
+        discount={planInfo?.isLegacyUser ? (paywallFeature === 'template_creation' ? 40 : 50) : undefined}
+        currentPlan={planInfo?.plan.id}
+      />
     </div>
   )
 }

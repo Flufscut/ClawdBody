@@ -11,7 +11,8 @@ export default function Home() {
 
   useEffect(() => {
     if (status === 'authenticated' && session) {
-      router.push('/select-vm')
+      // Redirect to onboarding - it will check plan and redirect to select-vm if needed
+      router.push('/onboarding')
     }
   }, [status, session, router])
 

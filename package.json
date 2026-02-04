@@ -11,7 +11,9 @@
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint",
-    "encrypt-keys": "npx tsx scripts/encrypt-existing-keys.ts"
+    "encrypt-keys": "npx tsx scripts/encrypt-existing-keys.ts",
+    "migrate-legacy": "npx tsx scripts/migrate-legacy-users.ts",
+    "migrate-legacy:dry": "npx tsx scripts/migrate-legacy-users.ts --dry-run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.1",
@@ -39,6 +41,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ssh2": "^1.17.0",
+    "stripe": "^20.3.0",
     "tailwind-merge": "^2.5.5",
     "ws": "^8.19.0"
   },
