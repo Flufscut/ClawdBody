@@ -11,6 +11,9 @@ import {
 } from '@/lib/plans'
 import { getCurrentPeriodUsage } from '@/lib/stripe'
 
+// Mark as dynamic since we use headers (getServerSession)
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/user/plan
  * Returns the current user's plan, bucket, and upsell context

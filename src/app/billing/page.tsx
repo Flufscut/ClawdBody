@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -61,7 +61,7 @@ interface PlanInfo {
   }
 }
 
-export default function BillingPage() {
+function BillingPageContent() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -482,5 +482,17 @@ export default function BillingPage() {
         currentPlan={planInfo?.plan.id}
       />
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-sam-bg flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-sam-accent" />
+      </div>
+    }>
+      <BillingPageContent />
+    </Suspense>
   )
 }

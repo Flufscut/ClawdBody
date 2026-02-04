@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -257,7 +257,7 @@ const vmOptions: VMOption[] = [
   },
 ]
 
-export default function SelectVMPage() {
+function SelectVMPageContent() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -4578,5 +4578,17 @@ export default function SelectVMPage() {
         currentPlan={planInfo?.plan.id}
       />
     </div>
+  )
+}
+
+export default function SelectVMPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-sam-bg flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-sam-accent" />
+      </div>
+    }>
+      <SelectVMPageContent />
+    </Suspense>
   )
 }

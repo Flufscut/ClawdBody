@@ -23,7 +23,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
 
 export const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: '2024-12-18.acacia',
+      apiVersion: '2026-01-28.clover',
       typescript: true,
     })
   : null
@@ -209,7 +209,7 @@ export async function handleCheckoutCompleted(
 
   const subscription = await stripe!.subscriptions.retrieve(
     session.subscription as string
-  )
+  ) as Stripe.Subscription
 
   // Get the user to check if they're legacy
   const user = await prisma.user.findUnique({
@@ -217,13 +217,18 @@ export async function handleCheckoutCompleted(
     select: { isLegacyUser: true },
   })
 
+  // Safely handle the period end date
+  const periodEnd = (subscription as any).current_period_end
+    ? new Date((subscription as any).current_period_end * 1000)
+    : undefined
+
   await prisma.user.update({
     where: { id: userId },
     data: {
       plan,
       stripeSubscriptionId: subscription.id,
       stripePriceId: subscription.items.data[0]?.price.id,
-      stripeCurrentPeriodEnd: new Date(subscription.current_period_end * 1000),
+      ...(periodEnd && { stripeCurrentPeriodEnd: periodEnd }),
       // Set early adopter discount if legacy user
       earlyAdopterDiscount: user?.isLegacyUser
         ? EARLY_ADOPTER_DISCOUNTS.upgrade
@@ -336,8 +341,8 @@ export async function handleSubscriptionUpdated(
   if (!userIdToUpdate) return
 
   // Safely handle the period end date
-  const periodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000)
+  const periodEnd = (subscription as any).current_period_end
+    ? new Date((subscription as any).current_period_end * 1000)
     : undefined
 
   await prisma.user.update({
@@ -417,7 +422,7 @@ export async function reportUsage(
   }
 
   // Report usage to Stripe
-  await stripe.subscriptionItems.createUsageRecord(meteredItem.id, {
+  await (stripe.subscriptionItems as any).createUsageRecord(meteredItem.id, {
     quantity,
     timestamp: Math.floor(Date.now() / 1000),
     action: 'increment',
@@ -497,8 +502,8 @@ export async function getCurrentPeriodUsage(userId: string): Promise<{
     },
   })
 
-  const llmUsage = usage.find((u) => u.type === 'llm_tokens')
-  const vmUsage = usage.find((u) => u.type === 'vm_hours')
+  const llmUsage = usage.find((u: { type: string }) => u.type === 'llm_tokens')
+  const vmUsage = usage.find((u: { type: string }) => u.type === 'vm_hours')
 
   const llmPriceCents = llmUsage?._sum.priceCents || 0
   const vmPriceCents = vmUsage?._sum.priceCents || 0

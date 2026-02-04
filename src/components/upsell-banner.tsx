@@ -177,7 +177,7 @@ export function UpsellBanner({
       </div>
 
       <button
-        onClick={() => onUpgrade?.('starter')}
+        onClick={() => onUpgrade?.()}
         className={`px-4 py-2 rounded-lg bg-sam-accent text-sam-bg font-medium text-sm hover:bg-sam-accent/90 transition-colors flex-shrink-0 flex items-center gap-2`}
       >
         {ctaText}
