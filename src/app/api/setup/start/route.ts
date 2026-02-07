@@ -548,7 +548,7 @@ async function runSetupProcess(
 /**
  * AWS EC2 Setup Process
  */
-async function runAWSSetupProcess(
+export async function runAWSSetupProcess(
   userId: string,
   llmApiKey: string,
   llmProvider: string,

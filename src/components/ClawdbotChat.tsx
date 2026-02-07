@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Loader2, Bot, User, AlertCircle, RefreshCw, Sparkles, Zap, Brain, Trash2, Wifi, WifiOff, AlertTriangle, Plus } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   id: string
@@ -784,7 +785,39 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
                       ? 'bg-red-500/10 border border-red-500/20 text-red-300 rounded-tl-md'
                       : 'bg-sam-surface/80 border border-sam-border text-sam-text rounded-tl-md'
                   }`}>
-                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+                    {message.role === 'user' ? (
+                      <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+                    ) : (
+                      <div className="text-sm break-words leading-relaxed prose prose-invert prose-sm max-w-none">
+                        <ReactMarkdown
+                          components={{
+                            p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0">{children}</p>,
+                            strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold text-inherit">{children}</strong>,
+                            em: ({ children }: { children?: React.ReactNode }) => <em className="italic text-inherit">{children}</em>,
+                            ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                            ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                            li: ({ children }: { children?: React.ReactNode }) => <li className="ml-2">{children}</li>,
+                            code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
+                              const isInline = !className
+                              return isInline ? (
+                                <code className="bg-sam-bg/30 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>
+                              ) : (
+                                <code className="block bg-sam-bg/30 p-2 rounded text-xs font-mono overflow-x-auto">{children}</code>
+                              )
+                            },
+                            pre: ({ children }: { children?: React.ReactNode }) => <pre className="mb-2 last:mb-0">{children}</pre>,
+                            h1: ({ children }: { children?: React.ReactNode }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{children}</h1>,
+                            h2: ({ children }: { children?: React.ReactNode }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
+                            h3: ({ children }: { children?: React.ReactNode }) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0">{children}</h3>,
+                            blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="border-l-2 border-sam-border pl-3 my-2 italic">{children}</blockquote>,
+                            a: ({ href, children }: { href?: string; children?: React.ReactNode }) => <a href={href} className="text-sam-accent hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+                            hr: () => <hr className="my-3 border-sam-border" />,
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
                     <p className={`text-[10px] mt-2 ${
                       message.role === 'user' ? 'text-sam-bg/50' : 'text-sam-text-dim'
                     }`}>

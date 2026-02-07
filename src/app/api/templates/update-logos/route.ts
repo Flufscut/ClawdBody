@@ -53,7 +53,7 @@ function getEmojiForTemplate(name: string, description: string): string {
  * Use AI to generate a more accurate emoji for the template
  */
 async function getEmojiWithAI(name: string, description: string): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.CLAWDBODY_ANTHROPIC_API_KEY
   
   if (!apiKey) {
     return getEmojiForTemplate(name, description)

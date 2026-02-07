@@ -41,6 +41,12 @@ model User {
   email         String?       @unique
   emailVerified DateTime?
   image         String?
+  
+  // Pro Subscription
+  isPro                Boolean   @default(false)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+
   accounts      Account[]
   sessions      Session[]
   setup         SetupState?

@@ -33,11 +33,11 @@ async function generateTemplateWithAI(
   description: string,
   prompt?: string
 ): Promise<AIGeneratedTemplate> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.CLAWDBODY_ANTHROPIC_API_KEY
   
   if (!apiKey) {
     // Fallback to basic generation if no API key
-    console.warn('[Templates] No ANTHROPIC_API_KEY found, using basic template generation')
+    console.warn('[Templates] No CLAWDBODY_ANTHROPIC_API_KEY found, using basic template generation')
     return fallbackTemplateGeneration(name, description, prompt)
   }
 

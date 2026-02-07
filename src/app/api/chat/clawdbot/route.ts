@@ -113,9 +113,9 @@ export async function POST(request: NextRequest) {
     const envVarName = envVarMap[llmProvider] || 'ANTHROPIC_API_KEY'
     envExports.push(`export ${envVarName}="${llmApiKey}"`)
     
-    // Build the clawdbot command with model selection
-    const modelFlag = llmModel ? ` --model ${llmModel}` : ''
-    const clawdbotCommand = `clawdbot agent --local --session-id "${chatSessionId}"${modelFlag} --message "${escapedMessage}"`
+    // Build the clawdbot command
+    // Note: Model is configured in ~/.clawdbot/clawdbot.json, not via CLI flag
+    const clawdbotCommand = `clawdbot agent --local --session-id "${chatSessionId}" --message "${escapedMessage}"`
     
     // Wrap command to source NVM and set API keys for the agent
     const wrappedCommand = `
@@ -230,13 +230,18 @@ cat ${pidFile}
         return NextResponse.json({ error: 'AWS instance not properly configured' }, { status: 400 })
       }
 
+      // Detect username based on AMI type
+      // Custom AMI (Amazon Linux) uses ec2-user, default Ubuntu AMI uses ubuntu
+      const usingCustomAmi = !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+      const sshUsername = usingCustomAmi ? 'ec2-user' : 'ubuntu'
+
       // Create SSH terminal provider for AWS
       const sshProvider = new SSHTerminalProvider({
         sessionId: `chat-${chatSessionId}`,
         provider: 'aws',
         host: publicIp,
         port: 22,
-        username: 'ubuntu',
+        username: sshUsername,
         privateKey: privateKey,
       })
 

@@ -44,7 +44,13 @@ export async function GET() {
     const deletedVMIds: string[] = []
 
     // Only validate if we have an Orgo API key
-    const orgoApiKey = setupState?.orgoApiKey ? decrypt(setupState.orgoApiKey) : null
+    let orgoApiKey: string | null = null
+    try {
+      orgoApiKey = setupState?.orgoApiKey ? decrypt(setupState.orgoApiKey) : null
+    } catch (error) {
+      console.error('[VMs] Failed to decrypt Orgo API key:', error)
+      // Continue without Orgo validation if decryption fails
+    }
     const orgoClient = orgoApiKey ? new OrgoClient(orgoApiKey) : null
 
     // Grace period: don't validate VMs created in the last 30 minutes
@@ -127,8 +133,9 @@ export async function GET() {
         llmApiKeyMasked = decryptedKey.length > 16
           ? `${decryptedKey.slice(0, 12)}...${decryptedKey.slice(-4)}`
           : '***'
-      } catch {
+      } catch (error) {
         // Key couldn't be decrypted, treat as no key
+        console.error('[VMs] Failed to decrypt LLM API key for masking:', error)
       }
     }
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, ChevronRight, Sparkles, PenTool, User, Lightbulb, Share2, Link2, Check } from 'lucide-react'
 import type { Template, TemplateIdea } from '@/lib/templates'
@@ -230,6 +231,7 @@ export default function SelectVMPage() {
   const [credentials, setCredentials] = useState<Credentials | null>(null)
   const [isLoadingVMs, setIsLoadingVMs] = useState(true)
   const [deletingVMId, setDeletingVMId] = useState<string | null>(null)
+  const [isDeployingPro, setIsDeployingPro] = useState(false)
 
   // General state
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -1592,9 +1594,20 @@ export default function SelectVMPage() {
               className="h-16 md:h-20 object-contain"
             />
             {session?.user?.name && (
-              <span className="text-xl md:text-2xl font-medium text-sam-text">
-                Hi {session.user.name.split(' ')[0]}!
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xl md:text-2xl font-medium text-sam-text">
+                  Hi {session.user.name.split(' ')[0]}!
+                </span>
+                {(session.user as any).isPro ? (
+                  <Link href="/pro" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
+                    Pro
+                  </Link>
+                ) : (
+                  <Link href="/upgrade" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
+                    Free
+                  </Link>
+                )}
+              </div>
             )}
           </motion.div>
           <motion.button
@@ -1655,10 +1668,66 @@ export default function SelectVMPage() {
             <div className="p-8 rounded-2xl border-2 border-dashed border-sam-border bg-sam-surface/30 text-center">
               <Server className="w-12 h-12 text-sam-text-dim mx-auto mb-4" />
               <button
-                className="px-6 py-3 rounded-lg bg-sam-accent text-sam-bg font-medium hover:bg-sam-accent/90 transition-colors flex items-center gap-2 mx-auto"
+                onClick={async () => {
+                  if (isDeployingPro) return // Prevent double clicks
+                  
+                  setIsDeployingPro(true)
+                  try {
+                    // If user is already Pro, deploy directly
+                    if (session?.user?.isPro) {
+                      const res = await fetch('/api/vms/deploy-pro', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          templateId: 'base',
+                          agentName: 'Pro Agent',
+                        }),
+                      })
+                      if (!res.ok) {
+                        const error = await res.text()
+                        throw new Error(error || 'Failed to deploy VM')
+                      }
+                      const data = await res.json()
+                      const vm = data.vm || data // Handle both { vm } and direct vm response
+                      if (!vm?.id) {
+                        throw new Error('Invalid VM response from server')
+                      }
+                      // Redirect to learning-sources to see deployment progress
+                      // Use vm_deploying param (not pro_signup) to avoid triggering another deploy-pro call
+                      router.push(`/learning-sources?vm_deploying=true&vmId=${vm.id}`)
+                    } else {
+                      // Not Pro, go to Stripe checkout
+                      const res = await fetch('/api/stripe/checkout', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          templateId: 'base',
+                          agentName: 'Pro Agent',
+                        }),
+                      })
+                      if (!res.ok) throw new Error('Failed to start checkout')
+                      const { url } = await res.json()
+                      if (url) window.location.href = url
+                    }
+                  } catch (e) {
+                    setIsDeployingPro(false)
+                    alert(e instanceof Error ? e.message : 'Failed to initiate deployment. Please try again.')
+                  }
+                }}
+                disabled={isDeployingPro}
+                className="px-6 py-3 rounded-lg bg-sam-accent text-sam-bg font-medium hover:bg-sam-accent/90 transition-colors flex items-center gap-2 mx-auto disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Rocket className="w-4 h-4" />
-                Deploy with 1-Click
+                {isDeployingPro ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deploying...
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="w-4 h-4" />
+                    Deploy with 1-Click
+                  </>
+                )}
               </button>
               <button className="mt-3 text-sm text-sam-text-dim/60 hover:text-sam-text-dim transition-colors flex flex-col items-center gap-1 text-center mx-auto">
                 <span>or bring your own API keys</span>
@@ -1685,22 +1754,72 @@ export default function SelectVMPage() {
                 </h2>
                 <div className="flex flex-col items-end gap-1">
                   <button
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sam-accent/10 border border-sam-accent/30 text-sam-accent text-sm font-medium hover:bg-sam-accent/20 hover:border-sam-accent/50 transition-all"
+                    onClick={async () => {
+                      if (isDeployingPro) return // Prevent double clicks
+                      
+                      setIsDeployingPro(true)
+                      try {
+                        // If user is already Pro, deploy directly
+                        if (session?.user?.isPro) {
+                          const res = await fetch('/api/vms/deploy-pro', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              templateId: 'base',
+                              agentName: 'Pro Agent',
+                            }),
+                          })
+                          if (!res.ok) {
+                            const error = await res.text()
+                            throw new Error(error || 'Failed to deploy VM')
+                          }
+                          const data = await res.json()
+                          const vm = data.vm || data // Handle both { vm } and direct vm response
+                          if (!vm?.id) {
+                            throw new Error('Invalid VM response from server')
+                          }
+                          // Redirect to learning-sources to see deployment progress
+                          // Use vm_deploying param (not pro_signup) to avoid triggering another deploy-pro call
+                          router.push(`/learning-sources?vm_deploying=true&vmId=${vm.id}`)
+                        } else {
+                          // Not Pro, go to Stripe checkout
+                          const res = await fetch('/api/stripe/checkout', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              templateId: 'base',
+                              agentName: 'Pro Agent',
+                            }),
+                          })
+                          if (!res.ok) throw new Error('Failed to start checkout')
+                          const { url } = await res.json()
+                          if (url) window.location.href = url
+                        }
+                      } catch (e) {
+                        setIsDeployingPro(false)
+                        alert(e instanceof Error ? e.message : 'Failed to initiate deployment. Please try again.')
+                      }
+                    }}
+                    disabled={isDeployingPro}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sam-accent/10 border border-sam-accent/30 text-sam-accent text-sm font-medium hover:bg-sam-accent/20 hover:border-sam-accent/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Rocket className="w-4 h-4" />
-                    Deploy 1-Click
-                  </button>
-                  <button className="text-xs text-sam-text-dim/60 hover:text-sam-text-dim transition-colors flex items-center justify-center gap-1.5 text-center">
-                    <span>or bring your own API keys</span>
-                    <span>free</span>
-                    <span className="text-sam-text-dim/50">•</span>
-                    <span>~20 mins</span>
+                    {isDeployingPro ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Deploying...
+                      </>
+                    ) : (
+                      <>
+                        <Rocket className="w-4 h-4" />
+                        Deploy 1-Click
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {userVMs.map((vm, index) => (
                 <motion.div
                   key={vm.id}
@@ -2007,16 +2126,21 @@ export default function SelectVMPage() {
         >
           <button
             onClick={() => setIsAddVMCollapsed(!isAddVMCollapsed)}
-            className="w-full text-left mb-4 flex items-center justify-between gap-2 hover:opacity-80 transition-opacity"
+            className="w-full text-left mb-4 flex items-start justify-between gap-2 hover:opacity-80 transition-opacity"
           >
-            <h2 className="text-xl font-display font-semibold text-sam-text flex items-center gap-2">
-              <Plus className="w-5 h-5 text-sam-accent" />
-              Add a New VM
-            </h2>
+            <div>
+              <h2 className="text-xl font-display font-semibold text-sam-text flex items-center gap-2">
+                <Plus className="w-5 h-5 text-sam-accent" />
+                Add a New VM
+              </h2>
+              <p className="text-sm text-sam-text-dim mt-1">
+                Click to expand
+              </p>
+            </div>
             {isAddVMCollapsed ? (
-              <ChevronRight className="w-5 h-5 text-sam-text-dim" />
+              <ChevronRight className="w-5 h-5 text-sam-text-dim mt-1" />
             ) : (
-              <ChevronDown className="w-5 h-5 text-sam-text-dim" />
+              <ChevronDown className="w-5 h-5 text-sam-text-dim mt-1" />
             )}
           </button>
 
@@ -2030,76 +2154,76 @@ export default function SelectVMPage() {
                 className="overflow-hidden"
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {vmOptions.map((option, index) => {
-              const isDisabled = !option.available || isSubmitting
+                  {vmOptions.map((option, index) => {
+                    const isDisabled = !option.available || isSubmitting
 
-              return (
-                <motion.button
-                  key={option.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.1 * index }}
-                  onClick={() => handleProviderClick(option.id)}
-                  disabled={isDisabled}
-                  className={`relative p-5 rounded-xl border transition-all duration-300 text-left ${isDisabled
-                    ? 'border-sam-border bg-sam-surface/30 opacity-60 cursor-not-allowed'
-                    : 'border-sam-border bg-sam-surface/30 hover:border-sam-accent/50 hover:bg-sam-surface/40 cursor-pointer'
-                    }`}
-                >
-                  {/* Icon */}
-                  <div className="flex items-center justify-center mb-4 h-14">
-                    {option.icon}
-                  </div>
+                    return (
+                      <motion.button
+                        key={option.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.1 * index }}
+                        onClick={() => handleProviderClick(option.id)}
+                        disabled={isDisabled}
+                        className={`relative p-5 rounded-xl border transition-all duration-300 text-left ${isDisabled
+                          ? 'border-sam-border bg-sam-surface/30 opacity-60 cursor-not-allowed'
+                          : 'border-sam-border bg-sam-surface/30 hover:border-sam-accent/50 hover:bg-sam-surface/40 cursor-pointer'
+                          }`}
+                      >
+                        {/* Icon */}
+                        <div className="flex items-center justify-center mb-4 h-14">
+                          {option.icon}
+                        </div>
 
-                  {/* Name and Badge */}
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-lg font-display font-semibold text-sam-text">
-                      {option.name}
-                    </h3>
-                  </div>
-                  {option.comingSoon && (
-                    <span className="inline-block text-xs font-mono text-sam-text-dim bg-sam-surface px-2 py-0.5 rounded mb-2">
-                      Coming Soon
-                    </span>
-                  )}
-                  {option.available && (
-                    <span className="inline-block text-xs font-mono text-green-400 bg-green-400/10 px-2 py-0.5 rounded mb-2">
-                      Available
-                    </span>
-                  )}
+                        {/* Name and Badge */}
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-lg font-display font-semibold text-sam-text">
+                            {option.name}
+                          </h3>
+                        </div>
+                        {option.comingSoon && (
+                          <span className="inline-block text-xs font-mono text-sam-text-dim bg-sam-surface px-2 py-0.5 rounded mb-2">
+                            Coming Soon
+                          </span>
+                        )}
+                        {option.available && (
+                          <span className="inline-block text-xs font-mono text-green-400 bg-green-400/10 px-2 py-0.5 rounded mb-2">
+                            Available
+                          </span>
+                        )}
 
-                  {/* Description */}
-                  <p className="text-sm text-sam-text-dim font-body leading-relaxed mb-3">
-                    {option.description}
-                  </p>
+                        {/* Description */}
+                        <p className="text-sm text-sam-text-dim font-body leading-relaxed mb-3">
+                          {option.description}
+                        </p>
 
-                  {/* Learn More Link */}
-                  <a
-                    href={option.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-sm text-sam-accent hover:text-sam-accent/80 transition-colors font-mono"
-                  >
-                    Learn more
-                    <ArrowRight className="w-3 h-3" />
-                  </a>
+                        {/* Learn More Link */}
+                        <a
+                          href={option.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-sm text-sam-accent hover:text-sam-accent/80 transition-colors font-mono"
+                        >
+                          Learn more
+                          <ArrowRight className="w-3 h-3" />
+                        </a>
 
-                  {/* Quick add indicator for configured providers */}
-                  {option.available && (
-                    (option.id === 'orgo' && credentials?.hasOrgoApiKey) ||
-                    (option.id === 'aws' && credentials?.hasAwsCredentials) ||
-                    (option.id === 'e2b' && credentials?.hasE2bApiKey)
-                  ) && (
-                      <div className="absolute top-3 right-3">
-                        <span className="text-[10px] font-mono text-sam-accent bg-sam-accent/10 px-1.5 py-0.5 rounded">
-                          Quick Add
-                        </span>
-                      </div>
-                    )}
-                </motion.button>
-              )
-            })}
+                        {/* Quick add indicator for configured providers */}
+                        {option.available && (
+                          (option.id === 'orgo' && credentials?.hasOrgoApiKey) ||
+                          (option.id === 'aws' && credentials?.hasAwsCredentials) ||
+                          (option.id === 'e2b' && credentials?.hasE2bApiKey)
+                        ) && (
+                            <div className="absolute top-3 right-3">
+                              <span className="text-[10px] font-mono text-sam-accent bg-sam-accent/10 px-1.5 py-0.5 rounded">
+                                Quick Add
+                              </span>
+                            </div>
+                          )}
+                      </motion.button>
+                    )
+                  })}
                 </div>
 
                 {/* Custom Provider Card - Full Width */}

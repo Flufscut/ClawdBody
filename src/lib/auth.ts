@@ -2,7 +2,7 @@ import { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import { prisma } from '@/lib/prisma'
-import { encryptUserData, isUserDataEncrypted } from '@/lib/encryption'
+import { encryptUserData, decryptUserData, isUserDataEncrypted } from '@/lib/encryption'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as any,
@@ -35,6 +35,11 @@ export const authOptions: NextAuthOptions = {
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id
+        session.user.isPro = user.isPro
+        // Decrypt email if it's encrypted
+        if (user.email && isUserDataEncrypted(user.email)) {
+          session.user.email = decryptUserData(user.email)
+        }
       }
       return session
     },
