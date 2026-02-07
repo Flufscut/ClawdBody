@@ -108,12 +108,17 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // Detect username based on AMI type
+      // Custom AMI (Amazon Linux) uses ec2-user, default Ubuntu AMI uses ubuntu
+      const usingCustomAmi = !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+      const sshUsername = usingCustomAmi ? 'ec2-user' : 'ubuntu'
+
       sshConfig = {
         sessionId,
         provider: 'aws',
         host: awsPublicIp,
         port: 22,
-        username: 'ubuntu',
+        username: sshUsername,
         privateKey: awsPrivateKey,
         cols,
         rows,

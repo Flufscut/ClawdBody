@@ -18,6 +18,7 @@
     "@auth/prisma-adapter": "^2.7.2",
     "@aws-sdk/client-ec2": "^3.975.0",
     "@aws-sdk/client-ssm": "^3.975.0",
+    "@aws-sdk/client-sts": "^3.975.0",
     "@e2b/code-interpreter": "^2.3.3",
     "@novnc/novnc": "1.6.0-beta",
     "@prisma/client": "^5.22.0",

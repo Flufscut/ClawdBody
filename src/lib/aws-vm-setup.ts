@@ -69,10 +69,14 @@ export class AWSVMSetup {
         reject(new Error(`SSH connection failed: ${err.message}`))
       })
       
+      // Detect username based on AMI type (custom AMI uses ec2-user, Ubuntu uses ubuntu)
+      // Try ec2-user first (Amazon Linux), then ubuntu (Ubuntu AMI)
+      const username = process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID ? 'ec2-user' : 'ubuntu'
+      
       this.sshClient.connect({
         host: this.publicIp,
         port: 22,
-        username: 'ubuntu', // Ubuntu AMI default user
+        username,
         privateKey: this.privateKey,
         readyTimeout: 60000,
       })
@@ -484,8 +488,13 @@ export class AWSVMSetup {
       throw new Error(`Unknown LLM provider: ${llmProvider}`)
     }
 
-    // Create directories
-    await this.runCommand('mkdir -p ~/.clawdbot /home/ubuntu/clawd/knowledge', 'Create Clawdbot directories')
+    // Create directories (use ec2-user home for Amazon Linux, ubuntu for Ubuntu)
+    // Detect user from home directory
+    const homeDir = await this.runCommand('echo $HOME', 'Get home directory')
+    const userHome = homeDir.output.trim() || '/home/ec2-user'
+    const clawdDir = `${userHome}/clawd`
+    
+    await this.runCommand(`mkdir -p ~/.clawdbot ${clawdDir}/knowledge`, 'Create Clawdbot directories')
 
     // Generate gateway token
     const tokenResult = await this.runCommand('openssl rand -hex 24', 'Generate gateway token')
@@ -498,11 +507,11 @@ export class AWSVMSetup {
 
 You are Clawdbot, an autonomous AI assistant running on AWS EC2 with access to a knowledge repository.
 
-Your workspace is at /home/ubuntu/clawd.
+Your workspace is at ${clawdDir}.
 
 ## Knowledge Directory Structure
-- /home/ubuntu/clawd/knowledge/vault - The main GitHub vault repository (auto-synced every minute)
-- /home/ubuntu/clawd/knowledge/* - Additional knowledge repositories
+- ${clawdDir}/knowledge/vault - The main GitHub vault repository (auto-synced every minute)
+- ${clawdDir}/knowledge/* - Additional knowledge repositories
 
 ## Behavior
 
@@ -511,15 +520,15 @@ Your workspace is at /home/ubuntu/clawd.
 - Be helpful, proactive, and thorough
 
 **During heartbeat (periodic check):**
-1. Check /home/ubuntu/clawd/knowledge/vault for updates
+1. Check ${clawdDir}/knowledge/vault for updates
 2. Look for tasks.md, TODO.md, or any task lists in the vault
 3. If you find actionable tasks, create a plan and begin execution
 4. Report significant progress or findings to the user via chat
-`
+`.replace(/\$\{clawdDir\}/g, clawdDir)
 
     const claudeMdB64 = Buffer.from(claudeMdContent).toString('base64')
     await this.runCommand(
-      `echo '${claudeMdB64}' | base64 -d > /home/ubuntu/clawd/CLAUDE.md`,
+      `echo '${claudeMdB64}' | base64 -d > ${clawdDir}/CLAUDE.md`,
       'Create CLAUDE.md system prompt'
     )
 
@@ -581,7 +590,7 @@ Your workspace is at /home/ubuntu/clawd.
   },
   "agents": {
     "defaults": {
-      "workspace": "/home/ubuntu/clawd",
+      "workspace": "${clawdDir}",
       "model": {
         "primary": "${primaryModel}"
       },
@@ -879,6 +888,52 @@ chmod +x ~/vault-sync-daemon.sh`,
       'Store Claude API key'
     )
     return result.success
+  }
+
+  /**
+   * Verify Clawdbot is installed (for custom AMI)
+   * This is a quick check - should be fast since Clawdbot is pre-installed
+   */
+  async verifyClawdbotInstalled(): Promise<{ installed: boolean; version?: string }> {
+    try {
+      // Quick check - just verify the binary exists and can be found
+      // Use a simpler command that's faster
+      const checkResult = await this.runCommand(
+        'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null; which clawdbot 2>/dev/null && echo "FOUND" || echo "NOT_FOUND"',
+        'Verify Clawdbot installation'
+      )
+      
+      if (checkResult.output.includes('NOT_FOUND') || !checkResult.success) {
+        return { installed: false }
+      }
+      
+      // Try to get version (non-blocking, don't fail if this times out)
+      try {
+        const versionResult = await Promise.race([
+          this.runCommand(
+            'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null; clawdbot --version 2>/dev/null | head -1 || cat ~/.nvm/versions/node/*/lib/node_modules/clawdbot/package.json 2>/dev/null | grep -o \'"version": "[^"]*"\' | head -1 | cut -d\'"\' -f4',
+            'Get Clawdbot version'
+          ),
+          new Promise<{ output: string; success: boolean }>((resolve) => 
+            setTimeout(() => resolve({ output: '', success: false }), 5000)
+          )
+        ])
+        
+        if (versionResult.success && versionResult.output.trim()) {
+          const versionMatch = versionResult.output.match(/(\d+\.\d+\.\d+)/)
+          if (versionMatch) {
+            return { installed: true, version: versionMatch[1] }
+          }
+        }
+      } catch (versionError) {
+        // Version check failed, but installation is confirmed
+        console.warn('[AWSVMSetup] Could not get Clawdbot version:', versionError)
+      }
+      
+      return { installed: true }
+    } catch (error) {
+      return { installed: false }
+    }
   }
 
   /**

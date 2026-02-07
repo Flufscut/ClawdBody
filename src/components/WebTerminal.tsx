@@ -48,6 +48,7 @@ export function WebTerminal({
   // Input batching - collect keystrokes and send together
   const inputBufferRef = useRef<string>('')
   const inputTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingInputRef = useRef<string>('') // Queue input if session not ready yet
   
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [error, setError] = useState<string | null>(null)
@@ -56,7 +57,22 @@ export function WebTerminal({
 
   // Flush batched input to server
   const flushInput = useCallback(async () => {
-    if (!sessionIdRef.current || !inputBufferRef.current) return
+    if (!sessionIdRef.current) {
+      // Session not ready - queue the input
+      if (inputBufferRef.current) {
+        pendingInputRef.current += inputBufferRef.current
+        inputBufferRef.current = ''
+      }
+      return
+    }
+    
+    // If there's pending input from before connection, add it first
+    if (pendingInputRef.current) {
+      inputBufferRef.current = pendingInputRef.current + inputBufferRef.current
+      pendingInputRef.current = ''
+    }
+    
+    if (!inputBufferRef.current) return
     
     const input = inputBufferRef.current
     inputBufferRef.current = ''
@@ -71,15 +87,16 @@ export function WebTerminal({
         }),
       })
     } catch (err) {
+      // On error, put input back in buffer to retry
+      inputBufferRef.current = input + inputBufferRef.current
     }
   }, [])
 
   // Send input to terminal with batching
   // Collects keystrokes for ~16ms (one animation frame) before sending
   const sendInput = useCallback((data: string) => {
-    if (!sessionIdRef.current) return
-
-    // Add to buffer
+    // Always buffer input, even if session not ready yet
+    // It will be sent once session is established
     inputBufferRef.current += data
     
     // Clear existing timeout
@@ -179,8 +196,21 @@ export function WebTerminal({
           if (output.type === 'connected') {
             setConnectionState('connected')
             isConnectingRef.current = false
+            
+            // Flush any pending input that was queued before connection
+            if (pendingInputRef.current || inputBufferRef.current) {
+              // Small delay to ensure shell is ready
+              setTimeout(() => {
+                flushInput()
+              }, 100)
+            }
+            
             // Focus the terminal so user can start typing
-            xtermRef.current?.focus()
+            // Use setTimeout to ensure terminal is fully rendered
+            setTimeout(() => {
+              xtermRef.current?.focus()
+            }, 50)
+            
             onReady?.()
           } else if (output.type === 'batch') {
             // Handle batched outputs (optimization to reduce egress)
@@ -325,7 +355,10 @@ export function WebTerminal({
     setTimeout(() => fitAddon.fit(), 0)
 
     // Handle input - use ref to avoid stale closures
+    // Also echo input locally for immediate feedback (even before connection)
     term.onData((data) => {
+      // Always echo to terminal for immediate feedback
+      // The actual input will be sent to server when session is ready
       sendInputRef.current(data)
     })
 

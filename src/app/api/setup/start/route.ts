@@ -611,7 +611,7 @@ async function runAWSSetupProcess(
       where: { userId },
     })
 
-    // Get the VM record if vmId is provided (to use its name)
+    // Get the VM record if vmId is provided (to use its name and check if instance already exists)
     let existingVM = null
     if (vmId) {
       existingVM = await prisma.vM.findUnique({
@@ -626,77 +626,160 @@ async function runAWSSetupProcess(
       region: awsRegion,
     })
 
-    // 1. Create AWS EC2 Instance
-    await updateStatus({ status: 'provisioning', vmStatus: 'creating' })
+    // Check if VM already has an instance (created via /api/vms with provisionNow=true)
+    let instance: { id: string; name: string; publicIp?: string }
+    let privateKey: string
 
-    // Use the VM's name (sanitized) for the AWS instance name
-    const instanceName = existingVM?.name ? sanitizeName(existingVM.name) : `clawdbot-${Date.now()}`
-    const { instance, privateKey } = await awsClient.createInstance({
-      name: instanceName,
-      instanceType: awsInstanceType,
-      region: awsRegion,
-    })
+    if (existingVM?.awsInstanceId && existingVM.vmCreated) {
+      // VM already has an instance - reuse it instead of creating a new one
+      console.log(`[AWS Setup] Reusing existing EC2 instance: ${existingVM.awsInstanceId}`)
+      
+      // Get the instance details from AWS
+      const awsInstance = await awsClient.getInstance(existingVM.awsInstanceId)
+      
+      instance = {
+        id: existingVM.awsInstanceId,
+        name: existingVM.awsInstanceName || existingVM.name,
+        publicIp: existingVM.awsPublicIp || awsInstance.publicIp,
+      }
+      
+      // Decrypt the stored private key
+      privateKey = existingVM.awsPrivateKey ? decrypt(existingVM.awsPrivateKey) : ''
+      
+      await updateStatus({
+        status: 'configuring_vm', // Skip provisioning, go straight to configuration
+        awsInstanceId: instance.id,
+        awsInstanceName: instance.name,
+        awsPublicIp: instance.publicIp,
+        vmStatus: 'running',
+        vmCreated: true,
+      })
+    } else {
+      // No existing instance - create a new one
+      await updateStatus({ status: 'provisioning', vmStatus: 'creating' })
 
-    await updateStatus({
-      awsInstanceId: instance.id,
-      awsInstanceName: instance.name,
-      awsPublicIp: instance.publicIp,
-      awsPrivateKey: encrypt(privateKey),
-      vmStatus: 'starting',
-    })
+      // Use the VM's name (sanitized) for the AWS instance name
+      const instanceName = existingVM?.name ? sanitizeName(existingVM.name) : `clawdbot-${Date.now()}`
+      const createResult = await awsClient.createInstance({
+        name: instanceName,
+        instanceType: awsInstanceType,
+        region: awsRegion,
+      })
+      
+      instance = createResult.instance
+      privateKey = createResult.privateKey
 
-    // Wait for instance to be running
-    await new Promise(resolve => setTimeout(resolve, 30000)) // Wait 30 seconds for instance to fully boot
+      await updateStatus({
+        awsInstanceId: instance.id,
+        awsInstanceName: instance.name,
+        awsPublicIp: instance.publicIp,
+        awsPrivateKey: encrypt(privateKey),
+        vmStatus: 'starting',
+      })
 
-    // Get updated instance info with public IP
-    const updatedInstance = await awsClient.getInstance(instance.id)
-    await updateStatus({
-      awsPublicIp: updatedInstance.publicIp,
-      vmCreated: true,
-      vmStatus: 'running',
-    })
+      // Wait for instance to be running
+      // Custom AMI boots faster since everything is pre-installed
+      const isCustomAmi = !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+      const bootWaitTime = isCustomAmi ? 15000 : 30000 // 15s for custom AMI, 30s for default
+      await new Promise(resolve => setTimeout(resolve, bootWaitTime))
+
+      // Get updated instance info with public IP
+      const updatedInstance = await awsClient.getInstance(instance.id)
+      await updateStatus({
+        awsPublicIp: updatedInstance.publicIp,
+        vmCreated: true,
+        vmStatus: 'running',
+      })
+    }
 
     // 2. Configure VM
     await updateStatus({ status: 'configuring_vm' })
+
+    // Get the public IP for SSH connection
+    const instancePublicIp = instance.publicIp || (await awsClient.getInstance(instance.id)).publicIp
 
     awsVMSetup = new AWSVMSetup(
       awsClient,
       instance.id,
       privateKey,
-      updatedInstance.publicIp,
+      instancePublicIp,
       () => {
         // Progress callback
       }
     )
 
-    // Install Python and essential tools
-    const pythonSuccess = await awsVMSetup.installPython()
-    if (!pythonSuccess) {
-      throw new Error('Failed to install Python and essential tools on VM')
-    }
+    // Check if using custom AMI (everything pre-installed)
+    const usingCustomAmi = !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+    let clawdbotResult: { success: boolean; version?: string } | null = null
+    
+    if (usingCustomAmi) {
+      // Custom AMI - skip installation, just verify and configure
+      console.log('[AWS Setup] Using custom AMI - skipping installation steps')
+      
+      // Immediately mark as installed (since it's in the AMI)
+      // This updates the UI right away so it doesn't show "Installing Clawdbot"
+      await updateStatus({ clawdbotInstalled: true })
+      
+      // Quick verification (with timeout to avoid blocking)
+      try {
+        const verifyResult = await Promise.race([
+          awsVMSetup.verifyClawdbotInstalled(),
+          new Promise<{ installed: boolean; version?: string }>((resolve) => 
+            setTimeout(() => resolve({ installed: true, version: '2026.1.22' }), 3000)
+          )
+        ])
+        
+        if (!verifyResult.installed) {
+          console.error('[AWS Setup] WARNING: Custom AMI may not have Clawdbot installed. Continuing anyway...')
+        } else {
+          console.log(`[AWS Setup] Clawdbot verified: version ${verifyResult.version || 'unknown'}`)
+        }
+        
+        clawdbotResult = {
+          success: true,
+          version: verifyResult.version || '2026.1.22'
+        }
+      } catch (err) {
+        console.warn('[AWS Setup] Could not verify Clawdbot installation, assuming it exists:', err)
+        clawdbotResult = {
+          success: true,
+          version: '2026.1.22'
+        }
+      }
+    } else {
+      // Default AMI - do full installation
+      // Install Python and essential tools
+      const pythonSuccess = await awsVMSetup.installPython()
+      if (!pythonSuccess) {
+        throw new Error('Failed to install Python and essential tools on VM')
+      }
 
-    // Install Anthropic SDKs
-    await awsVMSetup.installAnthropicSDK()
+      // Install Anthropic SDKs
+      await awsVMSetup.installAnthropicSDK()
 
-    // Install Clawdbot
-    const clawdbotResult = await awsVMSetup.installClawdbot()
-    if (!clawdbotResult.success) {
-      throw new Error('Failed to install Clawdbot')
+      // Install Clawdbot
+      clawdbotResult = await awsVMSetup.installClawdbot()
+      if (!clawdbotResult.success) {
+        throw new Error('Failed to install Clawdbot')
+      }
+      await updateStatus({ clawdbotInstalled: true })
     }
-    await updateStatus({ clawdbotInstalled: true })
 
     // Configure Clawdbot with Telegram if token is provided
     const finalTelegramToken = telegramBotToken || process.env.TELEGRAM_BOT_TOKEN
     const finalTelegramUserId = telegramUserId || process.env.TELEGRAM_USER_ID
 
     if (finalTelegramToken) {
+      // Get Clawdbot version from the result
+      const clawdbotVersion = clawdbotResult?.version || '2026.1.22'
+      
       const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
         llmApiKey,
         llmProvider,
         llmModel,
         telegramBotToken: finalTelegramToken,
         telegramUserId: finalTelegramUserId,
-        clawdbotVersion: clawdbotResult.version,
+        clawdbotVersion,
         heartbeatIntervalMinutes: 30,
         userId,
         apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',

@@ -65,6 +65,7 @@ interface Credentials {
   llmApiKeyMasked?: string
   llmProvider?: string
   llmModel?: string
+  usingCustomAmi?: boolean // Whether a custom AMI is configured
 }
 
 // Supported providers for display (per OpenClaw documentation)
@@ -320,6 +321,8 @@ export default function SelectVMPage() {
   const [awsInstanceTypes, setAwsInstanceTypes] = useState<AWSInstanceType[]>([])
   const [awsError, setAwsError] = useState<string | null>(null)
   const [awsVMName, setAwsVMName] = useState('')
+  const [isEditingAwsCredentials, setIsEditingAwsCredentials] = useState(false)
+  const [isDeletingAwsCredentials, setIsDeletingAwsCredentials] = useState(false)
 
   // E2B configuration modal state
   const [showE2BModal, setShowE2BModal] = useState(false)
@@ -1142,6 +1145,97 @@ export default function SelectVMPage() {
     // Reset LLM key editing state but keep saved key
     setIsEditingLlmKey(false)
     setLlmApiKey('')
+  }
+
+  // Handle deleting AWS credentials
+  const handleDeleteAwsCredentials = async () => {
+    if (!confirm('Are you sure you want to delete your AWS credentials? This will also remove any associated AWS instance information.')) {
+      return
+    }
+
+    setIsDeletingAwsCredentials(true)
+    setAwsError(null)
+    try {
+      const response = await fetch('/api/setup/aws/credentials', {
+        method: 'DELETE',
+      })
+
+      if (response.ok) {
+        setCredentials(prev => prev ? {
+          ...prev,
+          hasAwsCredentials: false,
+        } : null)
+        setAwsAccessKeyId('')
+        setAwsSecretAccessKey('')
+        setAwsKeyValidated(false)
+        setIsEditingAwsCredentials(false)
+        // Refresh credentials
+        await loadVMs()
+      } else {
+        const errorData = await response.json()
+        setAwsError(errorData.error || 'Failed to delete AWS credentials')
+      }
+    } catch (error) {
+      setAwsError('Failed to delete AWS credentials')
+    } finally {
+      setIsDeletingAwsCredentials(false)
+    }
+  }
+
+  // Handle updating AWS credentials
+  const handleUpdateAwsCredentials = async () => {
+    if (!awsAccessKeyId.trim() || !awsSecretAccessKey.trim()) {
+      setAwsError('Please enter your AWS credentials')
+      return
+    }
+
+    setIsSubmitting(true)
+    setAwsError(null)
+
+    try {
+      // First validate the credentials
+      const validateRes = await fetch('/api/setup/aws/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: awsAccessKeyId.trim(),
+          secretAccessKey: awsSecretAccessKey.trim(),
+          region: awsRegion,
+        }),
+      })
+
+      const validateData = await validateRes.json()
+
+      if (!validateRes.ok) {
+        throw new Error(validateData.error || 'Failed to validate AWS credentials')
+      }
+
+      // Update credentials
+      const updateRes = await fetch('/api/setup/aws/credentials', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: awsAccessKeyId.trim(),
+          secretAccessKey: awsSecretAccessKey.trim(),
+          region: awsRegion,
+          instanceType: awsInstanceType,
+        }),
+      })
+
+      if (!updateRes.ok) {
+        const errorData = await updateRes.json()
+        throw new Error(errorData.error || 'Failed to update AWS credentials')
+      }
+
+      setAwsKeyValidated(true)
+      setIsEditingAwsCredentials(false)
+      // Refresh credentials
+      await loadVMs()
+    } catch (e) {
+      setAwsError(e instanceof Error ? e.message : 'Failed to update AWS credentials')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleDeleteOrgoApiKey = async () => {
@@ -2556,8 +2650,8 @@ export default function SelectVMPage() {
                   />
                 </div>
 
-                {/* AWS Credentials - only show if not already configured */}
-                {!credentials?.hasAwsCredentials && (
+                {/* AWS Credentials - show if not configured or if editing */}
+                {(!credentials?.hasAwsCredentials || isEditingAwsCredentials) && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium text-sam-text flex items-center gap-2">
@@ -2644,13 +2738,110 @@ export default function SelectVMPage() {
                   </div>
                 )}
 
-                {/* Already configured notice */}
-                {credentials?.hasAwsCredentials && (
+                {/* Already configured notice with edit/delete */}
+                {credentials?.hasAwsCredentials && !isEditingAwsCredentials && (
                   <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/20">
-                    <p className="text-sm text-green-400 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Using your saved AWS credentials
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-green-400 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Using your saved AWS credentials
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setIsEditingAwsCredentials(true)
+                            setAwsAccessKeyId('')
+                            setAwsSecretAccessKey('')
+                            setAwsKeyValidated(false)
+                            setAwsError(null)
+                          }}
+                          className="text-xs text-sam-text-dim hover:text-sam-accent flex items-center gap-1 px-2 py-1 rounded hover:bg-sam-surface/50 transition-colors"
+                        >
+                          <PenTool className="w-3 h-3" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={handleDeleteAwsCredentials}
+                          disabled={isDeletingAwsCredentials}
+                          className="text-xs text-sam-text-dim hover:text-sam-error flex items-center gap-1 px-2 py-1 rounded hover:bg-sam-surface/50 transition-colors disabled:opacity-50"
+                        >
+                          {isDeletingAwsCredentials ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3 h-3" />
+                          )}
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Edit mode - show credential inputs */}
+                {credentials?.hasAwsCredentials && isEditingAwsCredentials && (
+                  <div className="space-y-4 p-4 rounded-lg bg-sam-surface/50 border border-sam-border">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                        <Key className="w-4 h-4 text-sam-accent" />
+                        Edit AWS Credentials
+                      </label>
+                      <button
+                        onClick={() => {
+                          setIsEditingAwsCredentials(false)
+                          setAwsAccessKeyId('')
+                          setAwsSecretAccessKey('')
+                          setAwsKeyValidated(false)
+                          setAwsError(null)
+                        }}
+                        className="text-xs text-sam-text-dim hover:text-sam-text"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-sam-text-dim mb-1.5 block">Access Key ID</label>
+                        <input
+                          type="text"
+                          value={awsAccessKeyId}
+                          onChange={(e) => setAwsAccessKeyId(e.target.value)}
+                          placeholder="AKIA..."
+                          className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text text-sm font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-sam-text-dim mb-1.5 block">Secret Access Key</label>
+                        <input
+                          type="password"
+                          value={awsSecretAccessKey}
+                          onChange={(e) => setAwsSecretAccessKey(e.target.value)}
+                          placeholder="Enter your secret access key"
+                          className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text text-sm font-mono"
+                        />
+                      </div>
+                      {awsError && (
+                        <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/20">
+                          <p className="text-xs text-red-400">{awsError}</p>
+                        </div>
+                      )}
+                      <button
+                        onClick={handleUpdateAwsCredentials}
+                        disabled={isSubmitting || !awsAccessKeyId.trim() || !awsSecretAccessKey.trim()}
+                        className="w-full px-4 py-2.5 rounded-lg bg-sam-accent text-sam-bg font-medium hover:bg-sam-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Updating...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            Update Credentials
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -2661,17 +2852,18 @@ export default function SelectVMPage() {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-4"
                   >
-                    {/* Region Selection */}
-                    <div className="space-y-3">
-                      <label className="text-sm font-medium text-sam-text flex items-center gap-2">
-                        <Globe className="w-4 h-4 text-sam-accent" />
-                        Region
-                      </label>
-                      <select
-                        value={awsRegion}
-                        onChange={(e) => setAwsRegion(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text text-sm"
-                      >
+                    {/* Region Selection - Hide when using custom AMI (AMIs are region-specific) */}
+                    {!credentials?.usingCustomAmi && (
+                      <div className="space-y-3">
+                        <label className="text-sm font-medium text-sam-text flex items-center gap-2">
+                          <Globe className="w-4 h-4 text-sam-accent" />
+                          Region
+                        </label>
+                        <select
+                          value={awsRegion}
+                          onChange={(e) => setAwsRegion(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-lg bg-sam-bg border border-sam-border focus:border-sam-accent focus:ring-1 focus:ring-sam-accent/30 transition-all text-sam-text text-sm"
+                        >
                         {(awsRegions.length > 0 ? awsRegions : [
                           { id: 'us-east-1', name: 'US East (N. Virginia)' },
                           { id: 'us-west-2', name: 'US West (Oregon)' },
@@ -2683,7 +2875,8 @@ export default function SelectVMPage() {
                           </option>
                         ))}
                       </select>
-                    </div>
+                      </div>
+                    )}
 
                     {/* Instance Type Selection */}
                     <div className="space-y-3">

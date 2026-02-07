@@ -143,6 +143,7 @@ export async function GET() {
         llmApiKeyMasked,
         llmProvider: setupState?.llmProvider,
         llmModel: setupState?.llmModel,
+        usingCustomAmi: !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID,
       },
     })
   } catch (error) {
@@ -275,6 +276,7 @@ export async function POST(request: NextRequest) {
     }
 
     // For AWS VMs with provisionNow, create the EC2 instance immediately
+    let finalAwsRegion = awsRegion // Will be set when instance is created
     if (provider === 'aws' && provisionNow) {
       // Get the AWS credentials from setup state
       const setupState = await prisma.setupState.findUnique({
@@ -298,12 +300,22 @@ export async function POST(request: NextRequest) {
           region: awsRegion || setupState.awsRegion || 'us-east-1',
         })
 
+        // Determine the region to use
+        finalAwsRegion = awsRegion || setupState.awsRegion || 'us-east-1'
+        
+        // Update the AWS client to use the correct region
+        const awsClientWithRegion = new AWSClient({
+          accessKeyId: decrypt(setupState.awsAccessKeyId),
+          secretAccessKey: decrypt(setupState.awsSecretAccessKey),
+          region: finalAwsRegion,
+        })
+        
         // Create the EC2 instance
-        console.log(`[AWS] Creating EC2 instance for user ${session.user.id}: ${sanitizedName}`)
-        const { instance, privateKey } = await awsClient.createInstance({
+        console.log(`[AWS] Creating EC2 instance for user ${session.user.id}: ${sanitizedName} in region ${finalAwsRegion}`)
+        const { instance, privateKey } = await awsClientWithRegion.createInstance({
           name: sanitizedName,
           instanceType: awsInstanceType || 'm7i-flex.large',
-          region: awsRegion || setupState.awsRegion || 'us-east-1',
+          region: finalAwsRegion,
         })
 
         awsInstanceId = instance.id
@@ -311,7 +323,8 @@ export async function POST(request: NextRequest) {
         awsPrivateKey = encrypt(privateKey) // Encrypt the private key before storing
         vmStatus = 'running'
         
-        console.log(`[AWS] Successfully created EC2 instance ${awsInstanceId} with IP ${awsPublicIp}`)
+        console.log(`[AWS] Successfully created EC2 instance ${awsInstanceId} with IP ${awsPublicIp} in region ${finalAwsRegion}`)
+        console.log(`[AWS] View in console: https://${finalAwsRegion}.console.aws.amazon.com/ec2/home?region=${finalAwsRegion}#Instances:instanceId=${awsInstanceId}`)
       } catch (awsError: any) {
         console.error(`[AWS] Failed to provision EC2 instance:`, awsError)
         const errorMessage = awsError.message || 'Failed to provision AWS EC2 instance'
@@ -384,7 +397,7 @@ export async function POST(request: NextRequest) {
         orgoComputerUrl,
         // AWS specific
         awsInstanceType,
-        awsRegion,
+        awsRegion: finalAwsRegion || awsRegion || 'us-east-1',
         awsInstanceId,
         awsPublicIp,
         awsPrivateKey,

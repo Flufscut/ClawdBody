@@ -21,6 +21,7 @@ import {
   DescribeSubnetsCommand,
   waitUntilInstanceRunning,
   DescribeImagesCommand,
+  ModifyImageAttributeCommand,
   _InstanceType,
 } from '@aws-sdk/client-ec2'
 import {
@@ -28,6 +29,10 @@ import {
   SendCommandCommand,
   GetCommandInvocationCommand,
 } from '@aws-sdk/client-ssm'
+import {
+  STSClient,
+  GetCallerIdentityCommand,
+} from '@aws-sdk/client-sts'
 
 const DEFAULT_REGION = 'us-east-1'
 
@@ -73,6 +78,7 @@ export interface AWSInstanceConfig {
 export class AWSClient {
   private ec2: EC2Client
   private ssm: SSMClient
+  private sts: STSClient
   private region: string
   private credentials: AWSCredentials
 
@@ -90,6 +96,55 @@ export class AWSClient {
     
     this.ec2 = new EC2Client(clientConfig)
     this.ssm = new SSMClient(clientConfig)
+    this.sts = new STSClient(clientConfig)
+  }
+
+  /**
+   * Get the AWS account ID of the current credentials
+   */
+  async getAccountId(): Promise<string> {
+    try {
+      const response = await this.sts.send(new GetCallerIdentityCommand({}))
+      return response.Account || ''
+    } catch (error: any) {
+      throw new Error(`Failed to get AWS account ID: ${error.message}`)
+    }
+  }
+
+  /**
+   * Share AMI with a specific AWS account
+   * Note: This requires admin credentials (the AMI owner's credentials)
+   */
+  static async shareAMIWithAccount(
+    amiId: string,
+    accountId: string,
+    region: string,
+    adminCredentials: AWSCredentials
+  ): Promise<void> {
+    const adminClient = new EC2Client({
+      region,
+      credentials: {
+        accessKeyId: adminCredentials.accessKeyId,
+        secretAccessKey: adminCredentials.secretAccessKey,
+      },
+    })
+
+    try {
+      await adminClient.send(new ModifyImageAttributeCommand({
+        ImageId: amiId,
+        LaunchPermission: {
+          Add: [{ UserId: accountId }],
+        },
+      }))
+      console.log(`[AWS] Successfully shared AMI ${amiId} with account ${accountId}`)
+    } catch (error: any) {
+      // If already shared, that's fine - ignore the error
+      if (error.message?.includes('already exists') || error.message?.includes('already authorized')) {
+        console.log(`[AWS] AMI ${amiId} already shared with account ${accountId}`)
+        return
+      }
+      throw new Error(`Failed to share AMI with account ${accountId}: ${error.message}`)
+    }
   }
 
   /**
@@ -213,10 +268,49 @@ export class AWSClient {
       this.ssm = new SSMClient(clientConfig)
     }
 
-    // Get AMI for the region
-    const ami = UBUNTU_AMIS[region]
+    // Get AMI - use custom AMI if available, otherwise fall back to Ubuntu AMI
+    const customAmiId = process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+    const ami = customAmiId || UBUNTU_AMIS[region]
+    
     if (!ami) {
-      throw new Error(`No Ubuntu AMI found for region ${region}. Supported regions: ${Object.keys(UBUNTU_AMIS).join(', ')}`)
+      throw new Error(`No AMI found for region ${region}. Supported regions: ${Object.keys(UBUNTU_AMIS).join(', ')}`)
+    }
+    
+    if (customAmiId) {
+      console.log(`[AWS] Using custom AMI: ${customAmiId}`)
+      
+      // Automatically share AMI with user's account if needed
+      try {
+        // Get the user's AWS account ID
+        const userAccountId = await this.getAccountId()
+        console.log(`[AWS] User's AWS account ID: ${userAccountId}`)
+        
+        // Get admin credentials from environment (for AMI owner)
+        // Use CLAWDBODY_AWS_ACCESS_KEY_ID if available, otherwise fall back to CLAWDBODY_AWS_ADMIN_ACCESS_KEY_ID
+        const adminAccessKeyId = process.env.CLAWDBODY_AWS_ACCESS_KEY_ID || process.env.CLAWDBODY_AWS_ADMIN_ACCESS_KEY_ID
+        const adminSecretAccessKey = process.env.CLAWDBODY_AWS_SECRET_ACCESS_KEY || process.env.CLAWDBODY_AWS_ADMIN_SECRET_ACCESS_KEY
+        
+        if (adminAccessKeyId && adminSecretAccessKey) {
+          // Share AMI with user's account automatically
+          await AWSClient.shareAMIWithAccount(
+            customAmiId,
+            userAccountId,
+            region,
+            {
+              accessKeyId: adminAccessKeyId,
+              secretAccessKey: adminSecretAccessKey,
+              region,
+            }
+          )
+        } else {
+          console.warn(`[AWS] Admin credentials not configured. AMI sharing will be skipped. Set CLAWDBODY_AWS_ACCESS_KEY_ID and CLAWDBODY_AWS_SECRET_ACCESS_KEY (or CLAWDBODY_AWS_ADMIN_*) to enable automatic AMI sharing.`)
+        }
+      } catch (shareError: any) {
+        // If sharing fails, log but continue - we'll catch the error on launch and retry
+        console.warn(`[AWS] Failed to share AMI automatically: ${shareError.message}. Will attempt to launch instance anyway.`)
+      }
+    } else {
+      console.log(`[AWS] Using default Ubuntu AMI for region ${region}: ${ami}`)
     }
 
     // Create security group
@@ -226,9 +320,15 @@ export class AWSClient {
     const keyName = `clawdbot-${config.name}-${Date.now()}`
     const privateKey = await this.createKeyPair(keyName)
 
-    // User data script to install SSM agent and basic tools
-    const userData = Buffer.from(`#!/bin/bash
-# Update system
+    // User data script - minimal setup since custom AMI has everything pre-installed
+    // For custom AMI, just mark as ready. For default Ubuntu AMI, do full setup.
+    const userData = customAmiId 
+      ? Buffer.from(`#!/bin/bash
+# Custom AMI - everything is pre-installed, just mark as ready
+touch /tmp/clawdbot-ready
+`).toString('base64')
+      : Buffer.from(`#!/bin/bash
+# Default Ubuntu AMI - install SSM agent and basic tools
 apt-get update -y
 apt-get upgrade -y
 
@@ -294,14 +394,102 @@ touch /tmp/clawdbot-ready
       if (!instanceId) {
         throw new Error('Failed to create instance')
       }
-    } catch (error) {
-      // Clean up the key pair since instance creation failed
-      try {
-        await this.ec2.send(new DeleteKeyPairCommand({ KeyName: keyName }))
-      } catch (cleanupError) {
-        // Failed to clean up key pair
+    } catch (error: any) {
+      // Check if error is "Not authorized for images" - this means AMI isn't shared
+      const isNotAuthorizedError = error.Code === 'AuthFailure' && 
+                                   (error.message?.includes('Not authorized for images') || 
+                                    error.Error?.Message?.includes('Not authorized for images'))
+      
+      // If it's a custom AMI and we got "not authorized", try to share it now
+      if (isNotAuthorizedError && customAmiId) {
+        // Use CLAWDBODY_AWS_ACCESS_KEY_ID if available, otherwise fall back to CLAWDBODY_AWS_ADMIN_ACCESS_KEY_ID
+        const adminAccessKeyId = process.env.CLAWDBODY_AWS_ACCESS_KEY_ID || process.env.CLAWDBODY_AWS_ADMIN_ACCESS_KEY_ID
+        const adminSecretAccessKey = process.env.CLAWDBODY_AWS_SECRET_ACCESS_KEY || process.env.CLAWDBODY_AWS_ADMIN_SECRET_ACCESS_KEY
+        
+        if (adminAccessKeyId && adminSecretAccessKey) {
+          try {
+            console.log(`[AWS] Got "Not authorized" error. Attempting to share AMI with user's account...`)
+            const userAccountId = await this.getAccountId()
+            await AWSClient.shareAMIWithAccount(
+              customAmiId,
+              userAccountId,
+              region,
+              {
+                accessKeyId: adminAccessKeyId,
+                secretAccessKey: adminSecretAccessKey,
+                region,
+              }
+            )
+            console.log(`[AWS] AMI shared successfully. Retrying instance launch...`)
+            
+            // Wait a moment for AWS to propagate the sharing
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            
+            // Retry the launch after sharing
+            const runResult = await this.ec2.send(new RunInstancesCommand({
+              ImageId: ami,
+              InstanceType: instanceType as _InstanceType,
+              MinCount: 1,
+              MaxCount: 1,
+              KeyName: keyName,
+              SecurityGroupIds: [securityGroupId],
+              SubnetId: subnetId,
+              UserData: userData,
+              BlockDeviceMappings: [
+                {
+                  DeviceName: '/dev/sda1',
+                  Ebs: {
+                    VolumeSize: volumeSize,
+                    VolumeType: 'gp3',
+                    DeleteOnTermination: true,
+                  },
+                },
+              ],
+              TagSpecifications: [
+                {
+                  ResourceType: 'instance',
+                  Tags: [
+                    { Key: 'Name', Value: config.name },
+                    { Key: 'CreatedBy', Value: 'Clawdbot' },
+                    { Key: 'Project', Value: 'clawdbot-vm' },
+                  ],
+                },
+              ],
+            }))
+            
+            instanceId = runResult.Instances?.[0]?.InstanceId
+            if (!instanceId) {
+              throw new Error('Failed to create instance')
+            }
+          } catch (shareError: any) {
+            // Sharing failed - throw original error with helpful message
+            const userAccountId = await this.getAccountId().catch(() => 'unknown')
+            throw new Error(
+              `AMI ${customAmiId} is not accessible. ` +
+              `Failed to automatically share AMI: ${shareError.message}. ` +
+              `Please ensure the AMI is manually shared with your AWS account (${userAccountId}). ` +
+              `Original error: ${error.message || error.Error?.Message || 'Not authorized for images'}`
+            )
+          }
+        } else {
+          // No admin credentials - provide helpful error
+          const userAccountId = await this.getAccountId().catch(() => 'unknown')
+          throw new Error(
+            `AMI ${customAmiId} is not accessible. ` +
+            `Please ensure the AMI is shared with your AWS account (${userAccountId}), ` +
+            `or configure CLAWDBODY_AWS_ACCESS_KEY_ID and CLAWDBODY_AWS_SECRET_ACCESS_KEY (or CLAWDBODY_AWS_ADMIN_*) for automatic sharing. ` +
+            `Original error: ${error.message || error.Error?.Message || 'Not authorized for images'}`
+          )
+        }
+      } else {
+        // Clean up the key pair since instance creation failed
+        try {
+          await this.ec2.send(new DeleteKeyPairCommand({ KeyName: keyName }))
+        } catch (cleanupError) {
+          // Failed to clean up key pair
+        }
+        throw error
       }
-      throw error
     }
 
     // Wait for instance to be running
