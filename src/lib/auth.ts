@@ -2,7 +2,7 @@ import { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import { prisma } from '@/lib/prisma'
-import { encryptUserData, decryptUserData, isUserDataEncrypted } from '@/lib/encryption'
+import { decryptUserData, isUserDataEncrypted } from '@/lib/encryption'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as any,
@@ -10,6 +10,7 @@ export const authOptions: NextAuthOptions = {
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      allowDangerousEmailAccountLinking: true,
       authorization: {
         params: {
           prompt: 'consent',
@@ -64,18 +65,6 @@ export const authOptions: NextAuthOptions = {
               status: 'pending',
             },
           })
-        }
-
-        // Encrypt user email if not already encrypted
-        if (user.email && !isUserDataEncrypted(user.email)) {
-          try {
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { email: encryptUserData(user.email) },
-            })
-          } catch (updateError) {
-            // Email update failed, but don't block sign-in
-          }
         }
       } catch (error) {
         // Don't block authentication if setup state creation fails

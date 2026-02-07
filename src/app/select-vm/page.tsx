@@ -1821,14 +1821,19 @@ function SelectVMContent() {
                   </>
                 )}
               </button>
-              <button className="mt-3 text-sm text-sam-text-dim/60 hover:text-sam-text-dim transition-colors flex flex-col items-center gap-1 text-center mx-auto">
-                <span>or bring your own API keys</span>
-                <span className="flex items-center justify-center gap-1.5 text-xs">
-                  <span>free</span>
-                  <span className="text-sam-text-dim/50">•</span>
-                  <span>~20 mins</span>
-                </span>
-              </button>
+              {!(session?.user as any)?.isPro && (
+                <button 
+                  onClick={() => handleProviderClick('aws')}
+                  className="mt-3 text-sm text-sam-text-dim/60 hover:text-sam-text-dim transition-colors flex flex-col items-center gap-1 text-center mx-auto"
+                >
+                  <span>or bring your own API keys</span>
+                  <span className="flex items-center justify-center gap-1.5 text-xs">
+                    <span>free</span>
+                    <span className="text-sam-text-dim/50">•</span>
+                    <span>~20 mins</span>
+                  </span>
+                </button>
+              )}
             </div>
           </motion.div>
         ) : (
