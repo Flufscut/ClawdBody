@@ -103,11 +103,12 @@ export class AgentOrchestrator {
       // Get or create project
       const project = await this.orgo.getOrCreateProject(this.projectName);
 
-      // Create VM
-      const computerName = generateComputerName();
-      const computer = await this.orgo.createComputer(
+      // Create VM with automatic unique name handling
+      const desiredComputerName = generateComputerName();
+      const computer = await this.orgo.createComputerWithUniqueName(
         project.id,
-        computerName,
+        project.name,
+        desiredComputerName,
         {
           os: config.os,
           ram: config.ram,

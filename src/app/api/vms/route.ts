@@ -238,12 +238,17 @@ export async function POST(request: NextRequest) {
       const orgoClient = new OrgoClient(decrypt(setupState.orgoApiKey))
 
       try {
-        // Call Orgo API to create the computer using the user's sanitized name
-        const computer = await orgoClient.createComputer(orgoProjectId, sanitizedName, {
-          os: 'linux',
-          ram: orgoRam as 1 | 2 | 4 | 8 | 16 | 32 | 64,
-          cpu: orgoCpu as 1 | 2 | 4 | 8 | 16,
-        })
+        // Call Orgo API to create the computer with automatic unique name handling
+        const computer = await orgoClient.createComputerWithUniqueName(
+          orgoProjectId || '',
+          orgoProjectName,
+          sanitizedName,
+          {
+            os: 'linux',
+            ram: orgoRam as 1 | 2 | 4 | 8 | 16 | 32 | 64,
+            cpu: orgoCpu as 1 | 2 | 4 | 8 | 16,
+          }
+        )
 
         orgoComputerId = computer.id
         orgoComputerUrl = computer.url

@@ -156,21 +156,48 @@ export function OrgoTerminal({
     setConnectionState('connecting')
     setError(null)
 
-    // Get terminal dimensions
-    const cols = xtermRef.current?.cols || 80
-    const rows = xtermRef.current?.rows || 24
-
-    // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
-    // Format from docs: wss://orgo-{uuid}.orgo.dev/terminal
-    // Add 'orgo-' prefix if not already present
-    const computerId = resolvedComputerId.startsWith('orgo-')
-      ? resolvedComputerId
-      : `orgo-${resolvedComputerId}`
-    const wsUrl = `wss://${computerId}.orgo.dev/terminal?cols=${cols}&rows=${rows}`
-    console.log('[OrgoTerminal] Raw computer ID:', resolvedComputerId)
-    console.log('[OrgoTerminal] Connecting to WebSocket:', wsUrl)
-
     try {
+      // Step 1: Get the VNC password (which is used as the token)
+      let password: string
+      if (vmId) {
+        // Use vmId to get password via API
+        const passwordResponse = await fetch(`/api/setup/vnc-password?vmId=${vmId}`)
+        if (!passwordResponse.ok) {
+          const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
+          throw new Error(errorData.error || 'Failed to get VNC password')
+        }
+        const data = await passwordResponse.json()
+        password = data.password
+      } else {
+        // Fallback: try without vmId (uses setupState)
+        const passwordResponse = await fetch('/api/setup/vnc-password')
+        if (!passwordResponse.ok) {
+          const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
+          throw new Error(errorData.error || 'Failed to get VNC password')
+        }
+        const data = await passwordResponse.json()
+        password = data.password
+      }
+
+      if (!password) {
+        throw new Error('VNC password not returned')
+      }
+
+      // Step 2: Connect with password as token
+      // Get terminal dimensions
+      const cols = xtermRef.current?.cols || 80
+      const rows = xtermRef.current?.rows || 24
+
+      // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
+      // Format from docs: wss://{computer_id}.orgo.dev/terminal?token={password}
+      // Add 'orgo-' prefix if not already present
+      const computerId = resolvedComputerId.startsWith('orgo-')
+        ? resolvedComputerId
+        : `orgo-${resolvedComputerId}`
+      const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=${cols}&rows=${rows}`
+      console.log('[OrgoTerminal] Raw computer ID:', resolvedComputerId)
+      console.log('[OrgoTerminal] Connecting to WebSocket:', wsUrl.replace(password, '***'))
+
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
@@ -237,6 +264,14 @@ export function OrgoTerminal({
         const hadSuccessfulConnection = wasConnectedRef.current
         wasConnectedRef.current = false
 
+        // 4401 is authentication error - don't auto-reconnect
+        if (event.code === 4401) {
+          setConnectionState('error')
+          setError('Authentication failed. Token may be invalid.')
+          xtermRef.current?.write('\r\n\x1b[31mAuthentication failed (4401). Please try reconnecting.\x1b[0m\r\n')
+          return
+        }
+
         // Only attempt reconnect if we had a real connection (received output) and haven't exceeded attempts
         if (hadSuccessfulConnection && reconnectAttemptRef.current < maxReconnectAttempts) {
           setConnectionState('disconnected')
@@ -258,7 +293,7 @@ export function OrgoTerminal({
       setConnectionState('error')
       setError(err instanceof Error ? err.message : 'Failed to connect')
     }
-  }, [resolvedComputerId, startHeartbeat, stopHeartbeat, onReady])
+  }, [resolvedComputerId, vmId, startHeartbeat, stopHeartbeat, onReady])
 
   // Schedule reconnect with exponential backoff
   const scheduleReconnect = useCallback(() => {

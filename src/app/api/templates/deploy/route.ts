@@ -198,12 +198,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<DeployRes
     
     let computer
     try {
-      console.log(`[Deploy] Calling createComputer with projectId=${orgoProjectId}, name=${sanitizedVmName}, ram=${ram}, cpu=${cpu}`)
-      computer = await orgoClient.createComputer(orgoProjectId || '', sanitizedVmName, {
-        os: 'linux',
-        ram: ram as 1 | 2 | 4 | 8 | 16 | 32 | 64,
-        cpu: cpu as 1 | 2 | 4 | 8 | 16,
-      })
+      console.log(`[Deploy] Calling createComputerWithUniqueName with projectId=${orgoProjectId}, name=${sanitizedVmName}, ram=${ram}, cpu=${cpu}`)
+      // Use createComputerWithUniqueName to handle duplicate names automatically
+      computer = await orgoClient.createComputerWithUniqueName(
+        orgoProjectId || '',
+        orgoProjectName,
+        sanitizedVmName,
+        {
+          os: 'linux',
+          ram: ram as 1 | 2 | 4 | 8 | 16 | 32 | 64,
+          cpu: cpu as 1 | 2 | 4 | 8 | 16,
+        }
+      )
       console.log(`[Deploy] VM created:`, JSON.stringify(computer, null, 2))
     } catch (error: any) {
       console.error(`[Deploy] Failed to create VM:`, error)

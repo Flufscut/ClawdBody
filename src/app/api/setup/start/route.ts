@@ -363,7 +363,8 @@ async function runSetupProcess(
       await updateStatus({ orgoProjectId: project.id || '' })
 
       // Use the VM's name (sanitized) for the Orgo computer name
-      const computerName = existingVM?.name ? sanitizeName(existingVM.name) : sanitizeName(projectName)
+      const desiredComputerName = existingVM?.name ? sanitizeName(existingVM.name) : sanitizeName(projectName)
+      
       // Create computer using project ID (POST /computers with project_id in body)
       // Retry logic for computer creation (may timeout but still succeed)
       let retries = 3
@@ -373,11 +374,17 @@ async function runSetupProcess(
         try {
           // If project ID is empty, try using project name instead (some APIs support this)
           const projectIdOrName = project.id || project.name
-          computer = await orgoClient.createComputer(projectIdOrName, computerName, {
-            os: 'linux',
-            ram: orgoRam as 1 | 2 | 4 | 8 | 16 | 32 | 64,
-            cpu: orgoCpu as 1 | 2 | 4 | 8 | 16,
-          })
+          // Use createComputerWithUniqueName to handle duplicate names automatically
+          computer = await orgoClient.createComputerWithUniqueName(
+            projectIdOrName,
+            project.name,
+            desiredComputerName,
+            {
+              os: 'linux',
+              ram: orgoRam as 1 | 2 | 4 | 8 | 16 | 32 | 64,
+              cpu: orgoCpu as 1 | 2 | 4 | 8 | 16,
+            }
+          )
 
           // If we didn't have a project ID, update it from the created computer's project info
           if (!project.id && computer.project_name) {

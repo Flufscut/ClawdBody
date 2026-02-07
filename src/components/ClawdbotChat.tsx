@@ -92,19 +92,36 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
   }, [vmId])
 
   // Connect to Orgo WebSocket for chat
-  const connectWebSocket = useCallback(() => {
-    if (!vmInfo?.orgoComputerId || vmInfo.provider !== 'orgo') return
+  const connectWebSocket = useCallback(async () => {
+    if (!vmInfo?.orgoComputerId || vmInfo.provider !== 'orgo' || !vmId) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
-    // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
-    // Format from docs: wss://orgo-{uuid}.orgo.dev/terminal
-    const computerId = vmInfo.orgoComputerId.startsWith('orgo-')
-      ? vmInfo.orgoComputerId
-      : `orgo-${vmInfo.orgoComputerId}`
-    const wsUrl = `wss://${computerId}.orgo.dev/terminal?cols=200&rows=50`
-    console.log('[ClawdbotChat] Connecting to WebSocket:', wsUrl)
-
     try {
+      // Step 1: Get the VNC password (which is used as the token)
+      const passwordResponse = await fetch(`/api/setup/vnc-password?vmId=${vmId}`)
+      if (!passwordResponse.ok) {
+        const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
+        console.error('[ClawdbotChat] Failed to get VNC password:', errorData.error)
+        setWsConnected(false)
+        return
+      }
+
+      const { password } = await passwordResponse.json()
+      if (!password) {
+        console.error('[ClawdbotChat] VNC password not returned')
+        setWsConnected(false)
+        return
+      }
+
+      // Step 2: Connect with password as token
+      // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
+      // Format from docs: wss://{computer_id}.orgo.dev/terminal?token={password}
+      const computerId = vmInfo.orgoComputerId.startsWith('orgo-')
+        ? vmInfo.orgoComputerId
+        : `orgo-${vmInfo.orgoComputerId}`
+      const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=200&rows=50`
+      console.log('[ClawdbotChat] Connecting to WebSocket:', wsUrl.replace(password, '***'))
+
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
@@ -165,25 +182,31 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
         setWsConnected(false)
       }
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         setWsConnected(false)
         if (pingIntervalRef.current) {
           clearInterval(pingIntervalRef.current)
           pingIntervalRef.current = null
         }
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-          if (vmInfo?.provider === 'orgo') {
-            connectWebSocket()
-          }
-        }, 5000)
+        // Only reconnect if it wasn't a 4401 (authentication error)
+        // 4401 means invalid token, so we shouldn't retry immediately
+        if (event.code !== 4401) {
+          // Attempt to reconnect after 5 seconds
+          setTimeout(() => {
+            if (vmInfo?.provider === 'orgo') {
+              connectWebSocket()
+            }
+          }, 5000)
+        } else {
+          console.error('[ClawdbotChat] Authentication failed (4401). Token may be invalid.')
+        }
       }
 
     } catch (err) {
       console.error('Failed to connect WebSocket:', err)
       setWsConnected(false)
     }
-  }, [vmInfo])
+  }, [vmInfo, vmId])
 
   // Connect WebSocket when VM info is available for Orgo
   useEffect(() => {

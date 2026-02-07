@@ -137,6 +137,8 @@ export class OrgoAdapter {
 
   /**
    * Create a new computer (VM)
+   * 
+   * Note: For automatic duplicate name handling, use createComputerWithUniqueName instead
    */
   async createComputer(
     projectId: string,
@@ -156,6 +158,45 @@ export class OrgoAdapter {
   }
 
   /**
+   * Create a new computer with automatic duplicate name handling
+   * If a duplicate name error occurs, it will automatically retry with a unique name
+   */
+  async createComputerWithUniqueName(
+    projectId: string,
+    projectName: string | undefined,
+    computerName: string,
+    options: CreateComputerOptions = {}
+  ): Promise<OrgoComputer> {
+    // First, ensure the name is unique
+    const uniqueName = await this.ensureUniqueComputerName(projectId, projectName, computerName);
+    
+    try {
+      return await this.createComputer(projectId, uniqueName, options);
+    } catch (error: unknown) {
+      // If we still get a duplicate error (race condition), retry with a new unique name
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes('duplicate key') ||
+        errorMessage.includes('desktops_project_name_unique') ||
+        errorMessage.includes('already exists')
+      ) {
+        console.log(`[OrgoAdapter] Duplicate name error detected, generating new unique name...`);
+        // Generate a new unique name with timestamp to avoid race conditions
+        const timestamp = Date.now();
+        const baseName = uniqueName.substring(0, 50); // Leave room for timestamp
+        const newUniqueName = await this.ensureUniqueComputerName(
+          projectId,
+          projectName,
+          `${baseName}-${timestamp}`
+        );
+        return await this.createComputer(projectId, newUniqueName, options);
+      }
+      // Re-throw other errors
+      throw error;
+    }
+  }
+
+  /**
    * Get computer details by ID
    */
   async getComputer(computerId: string): Promise<OrgoComputer> {
@@ -170,6 +211,88 @@ export class OrgoAdapter {
       `/projects/${encodeURIComponent(projectName)}/computers`
     );
     return response.computers || [];
+  }
+
+  /**
+   * Get project name from project ID
+   * If projectId is empty, returns the provided projectName as fallback
+   */
+  private async getProjectName(projectId: string, projectName?: string): Promise<string> {
+    if (!projectId && projectName) {
+      return projectName;
+    }
+    if (!projectId) {
+      throw new Error('Either projectId or projectName must be provided');
+    }
+    
+    // List all projects and find the one with matching ID
+    const projects = await this.listProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (project) {
+      return project.name;
+    }
+    
+    // If not found and projectName was provided, use it as fallback
+    if (projectName) {
+      return projectName;
+    }
+    
+    throw new Error(`Project with ID ${projectId} not found`);
+  }
+
+  /**
+   * Ensure a computer name is unique within a project
+   * Checks existing computers and appends a number suffix if needed
+   * @param projectId - The project ID (can be empty if projectName is provided)
+   * @param projectName - The project name (used if projectId is empty or to list computers)
+   * @param desiredName - The desired computer name
+   * @returns A unique computer name
+   */
+  async ensureUniqueComputerName(
+    projectId: string,
+    projectName: string | undefined,
+    desiredName: string
+  ): Promise<string> {
+    try {
+      // Get the project name (needed to list computers)
+      const nameToUse = await this.getProjectName(projectId, projectName);
+      
+      // List existing computers in the project
+      const existingComputers = await this.listComputers(nameToUse);
+      const existingNames = new Set(existingComputers.map((c) => c.name.toLowerCase()));
+      
+      // If the desired name is already unique, return it
+      if (!existingNames.has(desiredName.toLowerCase())) {
+        return desiredName;
+      }
+      
+      // Generate a unique name by appending a number
+      let counter = 1;
+      let uniqueName = `${desiredName}-${counter}`;
+      
+      // Ensure the name doesn't exceed length limits
+      const maxBaseLength = 63 - 5; // Leave room for "-123" suffix
+      const baseName = desiredName.substring(0, maxBaseLength);
+      
+      while (existingNames.has(uniqueName.toLowerCase()) && counter < 1000) {
+        counter++;
+        uniqueName = `${baseName}-${counter}`;
+      }
+      
+      if (counter >= 1000) {
+        // Fallback: append timestamp to ensure uniqueness
+        uniqueName = `${baseName}-${Date.now()}`;
+      }
+      
+      console.log(`[OrgoAdapter] Name "${desiredName}" already exists in project, using unique name: "${uniqueName}"`);
+      return uniqueName;
+    } catch (error: unknown) {
+      // If we can't list computers (e.g., project doesn't exist yet), 
+      // return the desired name and let createComputer handle the error
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(`[OrgoAdapter] Could not verify name uniqueness: ${errorMessage}, using desired name: "${desiredName}"`);
+      return desiredName;
+    }
   }
 
   /**
