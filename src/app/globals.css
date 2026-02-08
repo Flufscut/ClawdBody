@@ -29,6 +29,12 @@ body:has(.landing-page-container) {
   z-index: 0;
 }
 
+/* Landing: clean typography */
+.landing-page-container {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 .landing-stars {
   position: fixed;
   inset: 0;

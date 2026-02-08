@@ -1064,12 +1064,12 @@ function LearningSourcesContent() {
                 Clawdbot is still actively in development and might be rough around the edges.
                 If you face any issues, please{' '}
                 <a
-                  href="https://github.com/Prakshal-Jain/ClawdBody/issues/new"
+                  href="https://discord.gg/u6nn9r4Cy5"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sam-accent hover:underline font-medium inline-flex items-center gap-1"
                 >
-                  report them here
+                  get support here
                   <ExternalLink className="w-3 h-3" />
                 </a>
                 .

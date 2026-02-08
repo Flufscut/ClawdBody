@@ -2456,6 +2456,15 @@ function SelectVMContent() {
             >
               Terms and Conditions
             </a>
+            {' · '}
+            <a
+              href="https://discord.gg/u6nn9r4Cy5"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sam-accent hover:text-sam-accent/80 underline underline-offset-2 transition-colors"
+            >
+              Contact us
+            </a>
           </p>
           <p className="text-xs text-sam-text-dim/60 mt-2">
             © {new Date().getFullYear()} ClawdBody. All rights reserved.
