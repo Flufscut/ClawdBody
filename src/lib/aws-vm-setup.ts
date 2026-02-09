@@ -69,9 +69,9 @@ export class AWSVMSetup {
         reject(new Error(`SSH connection failed: ${err.message}`))
       })
       
-      // Detect username based on AMI type (custom AMI uses ec2-user, Ubuntu uses ubuntu)
-      // Try ec2-user first (Amazon Linux), then ubuntu (Ubuntu AMI)
-      const username = process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID ? 'ec2-user' : 'ubuntu'
+      // OpenClaw AMI is Ubuntu-based (install_openclaw_ami.sh); other custom AMI may be Amazon Linux (ec2-user)
+      const isOpenClawAmi = !!process.env.CLAWDBODY_AWS_OPENCLAW_AMI
+      const username = isOpenClawAmi ? 'ubuntu' : (process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID ? 'ec2-user' : 'ubuntu')
       
       this.sshClient.connect({
         host: this.publicIp,
@@ -888,6 +888,175 @@ chmod +x ~/vault-sync-daemon.sh`,
       'Store Claude API key'
     )
     return result.success
+  }
+
+  /**
+   * Verify OpenClaw (openclaw.ai) is available (repo + Docker) for OpenClaw AMI
+   */
+  async verifyOpenClawInstalled(): Promise<{ installed: boolean; version?: string }> {
+    try {
+      const checkResult = await this.runCommand(
+        '[ -d "$HOME/openclaw" ] && command -v docker >/dev/null 2>&1 && (docker compose version >/dev/null 2>&1 || docker-compose --version >/dev/null 2>&1) && echo "FOUND" || echo "NOT_FOUND"',
+        'Verify OpenClaw installation'
+      )
+      if (checkResult.output.includes('NOT_FOUND') || !checkResult.success) {
+        return { installed: false }
+      }
+      return { installed: true, version: 'openclaw' }
+    } catch {
+      return { installed: false }
+    }
+  }
+
+  /**
+   * Configure OpenClaw with Telegram and gateway (writes ~/.openclaw/openclaw.json and ~/openclaw/.env)
+   */
+  async setupOpenClawTelegram(options: {
+    llmApiKey: string
+    llmProvider: string
+    llmModel: string
+    telegramBotToken: string
+    telegramUserId?: string
+    heartbeatIntervalMinutes?: number
+    userId?: string
+    apiBaseUrl?: string
+  }): Promise<boolean> {
+    const {
+      llmApiKey,
+      llmProvider,
+      llmModel,
+      telegramBotToken,
+      telegramUserId,
+      heartbeatIntervalMinutes = 30,
+    } = options
+
+    if (!llmApiKey) throw new Error('LLM API key is required')
+    const provider = LLM_PROVIDERS.find(p => p.id === llmProvider)
+    if (!provider) throw new Error(`Unknown LLM provider: ${llmProvider}`)
+
+    const homeDir = await this.runCommand('echo $HOME', 'Get home directory')
+    const userHome = homeDir.output.trim() || '/home/ubuntu'
+    const openclawDir = `${userHome}/.openclaw`
+    const workspaceDir = `${userHome}/.openclaw/workspace`
+    const repoDir = `${userHome}/openclaw`
+
+    await this.runCommand(`mkdir -p ${openclawDir} ${workspaceDir}`, 'Create OpenClaw directories')
+
+    const tokenResult = await this.runCommand('openssl rand -hex 32', 'Generate gateway token')
+    const gatewayToken = tokenResult.output.trim() || 'fallback-token-' + Date.now()
+
+    const allowFromJson = telegramUserId ? `"allowFrom": ["${telegramUserId}"],` : ''
+
+    let modelsProviders: Record<string, unknown> | null = null
+    if (provider.needsModelsProviders && provider.baseUrl) {
+      const modelId = llmModel.startsWith(`${provider.id}/`) ? llmModel.substring(provider.id.length + 1) : llmModel
+      const providerConfig: Record<string, unknown> = {
+        baseUrl: provider.baseUrl,
+        apiKey: `\${${provider.envVar}}`,
+        api: 'openai-completions',
+        models: [{ id: modelId, name: modelId }],
+      }
+      if (provider.id === 'openrouter') {
+        (providerConfig as Record<string, unknown>).headers = { 'HTTP-Referer': 'https://clawdbody.com', 'X-Title': 'OpenClaw' }
+      }
+      modelsProviders = { [provider.id]: providerConfig }
+    }
+
+    const configJson = `{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "auth": { "mode": "token", "token": "${gatewayToken}" }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "${workspaceDir}",
+      "model": { "primary": "${llmModel}" },
+      "compaction": { "mode": "safeguard" },
+      "maxConcurrent": 4,
+      "heartbeat": {
+        "every": "${heartbeatIntervalMinutes}m",
+        "target": "last",
+        "activeHours": { "start": "00:00", "end": "24:00" }
+      }
+    }
+  },${modelsProviders ? `
+  "models": { "mode": "merge", "providers": ${JSON.stringify(modelsProviders)} },` : ''}
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "${telegramBotToken}",
+      "dmPolicy": "allowlist",
+      ${allowFromJson}
+      "groupPolicy": "allowlist"
+    }
+  }
+}`
+
+    const configB64 = Buffer.from(configJson).toString('base64')
+    const writeConfig = await this.runCommand(
+      `echo '${configB64}' | base64 -d > ${openclawDir}/openclaw.json`,
+      'Write OpenClaw config'
+    )
+    if (!writeConfig.success) return false
+
+    const envContent = `OPENCLAW_GATEWAY_TOKEN=${gatewayToken}
+OPENCLAW_GATEWAY_BIND=lan
+OPENCLAW_GATEWAY_PORT=18789
+OPENCLAW_CONFIG_DIR=${openclawDir}
+OPENCLAW_WORKSPACE_DIR=${workspaceDir}
+XDG_CONFIG_HOME=/home/node/.openclaw
+${provider.envVar}=${llmApiKey}
+TELEGRAM_BOT_TOKEN=${telegramBotToken}
+`
+    const envB64 = Buffer.from(envContent).toString('base64')
+    await this.runCommand(
+      `echo '${envB64}' | base64 -d > ${repoDir}/.env`,
+      'Write OpenClaw .env'
+    )
+
+    this.onProgress?.({ step: 'Setup OpenClaw', message: 'OpenClaw configured with Telegram', success: true })
+    return true
+  }
+
+  /**
+   * Start the OpenClaw gateway via Docker Compose
+   */
+  async startOpenClawGateway(): Promise<boolean> {
+    const homeDir = await this.runCommand('echo $HOME', 'Get home directory')
+    const userHome = homeDir.output.trim() || '/home/ubuntu'
+    const repoDir = `${userHome}/openclaw`
+
+    await this.runCommand(`cd ${repoDir} && docker compose down 2>/dev/null || true`, 'Stop existing OpenClaw containers')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    const upResult = await this.runCommand(
+      `cd ${repoDir} && docker compose up -d`,
+      'Start OpenClaw gateway'
+    )
+    if (!upResult.success) return false
+
+    await new Promise(resolve => setTimeout(resolve, 10000))
+
+    let isRunning = false
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const portCheck = await this.runCommand(
+        "ss -tlnp 2>/dev/null | grep -q 18789 || netstat -tlnp 2>/dev/null | grep -q 18789 && echo 'PORT_LISTENING' || echo 'PORT_NOT_LISTENING'",
+        'Check gateway port'
+      )
+      if (portCheck.output.includes('PORT_LISTENING')) {
+        isRunning = true
+        break
+      }
+      if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 5000))
+    }
+
+    this.onProgress?.({
+      step: 'Start Gateway',
+      message: isRunning ? 'OpenClaw gateway is running' : 'OpenClaw gateway may still be starting. Check: docker compose logs.',
+      success: isRunning,
+    })
+    return isRunning
   }
 
   /**

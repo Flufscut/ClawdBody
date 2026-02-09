@@ -104,14 +104,12 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'AWS instance not ready' }, { status: 400 })
         }
 
-        // Decrypt stored AWS credentials
         const awsClient = new AWSClient({
           accessKeyId: decrypt(awsState.awsAccessKeyId),
           secretAccessKey: decrypt(awsState.awsSecretAccessKey),
           region: vm.awsRegion || 'us-east-1',
         })
 
-        // Decrypt stored private key
         const awsVMSetup = new AWSVMSetup(
           awsClient,
           vm.awsInstanceId!,
@@ -119,22 +117,36 @@ export async function POST(request: NextRequest) {
           vm.awsPublicIp
         )
 
-        telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
-          llmApiKey,
-          llmProvider,
-          llmModel,
-          telegramBotToken,
-          telegramUserId,
-          clawdbotVersion,
-          heartbeatIntervalMinutes: 30,
-        })
-
-        if (telegramSuccess) {
-          gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+        const openClawAmi = !!process.env.CLAWDBODY_AWS_OPENCLAW_AMI
+        if (openClawAmi) {
+          telegramSuccess = await awsVMSetup.setupOpenClawTelegram({
             llmApiKey,
             llmProvider,
+            llmModel,
             telegramBotToken,
+            telegramUserId,
+            heartbeatIntervalMinutes: 30,
           })
+          if (telegramSuccess) {
+            gatewaySuccess = await awsVMSetup.startOpenClawGateway()
+          }
+        } else {
+          telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
+            llmApiKey,
+            llmProvider,
+            llmModel,
+            telegramBotToken,
+            telegramUserId,
+            clawdbotVersion,
+            heartbeatIntervalMinutes: 30,
+          })
+          if (telegramSuccess) {
+            gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+              llmApiKey,
+              llmProvider,
+              telegramBotToken,
+            })
+          }
         }
 
         awsVMSetup.cleanup()

@@ -170,45 +170,55 @@ export async function runAWSSetupProcess(
       }
     )
 
-    // Check if using custom AMI (everything pre-installed)
-    // Use custom AMI for all users if available (skip installation)
+    // Check if using custom AMI (everything pre-installed) and whether it's OpenClaw (Docker) or Clawdbot (npm)
     const customAmiAvailable = !!process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID
+    const openClawAmi = !!process.env.CLAWDBODY_AWS_OPENCLAW_AMI
     const usingCustomAmi = customAmiAvailable
-    
+
     let clawdbotResult: { success: boolean; version?: string } | null = null
-    
+
     if (usingCustomAmi) {
-      // Custom AMI - skip installation, just verify and configure
-      console.log(`[AWS Setup] Using custom AMI - skipping installation steps (AMI: ${process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID})`)
-      
-      // Immediately mark as installed (since it's in the AMI)
-      // This updates the UI right away so it doesn't show "Installing Clawdbot"
       await updateStatus({ clawdbotInstalled: true })
-      
-      // Quick verification (with timeout to avoid blocking)
-      try {
-        const verifyResult = await Promise.race([
-          awsVMSetup.verifyClawdbotInstalled(),
-          new Promise<{ installed: boolean; version?: string }>((resolve) => 
-            setTimeout(() => resolve({ installed: true, version: '2026.1.22' }), 3000)
-          )
-        ])
-        
-        if (!verifyResult.installed) {
-          console.error('[AWS Setup] WARNING: Custom AMI may not have Clawdbot installed. Continuing anyway...')
-        } else {
-          console.log(`[AWS Setup] Clawdbot verified: version ${verifyResult.version || 'unknown'}`)
+
+      if (openClawAmi) {
+        // OpenClaw AMI: verify OpenClaw + Docker, then configure and start via Docker
+        console.log(`[AWS Setup] Using OpenClaw AMI - verify and configure (AMI: ${process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID})`)
+        try {
+          const verifyResult = await Promise.race([
+            awsVMSetup.verifyOpenClawInstalled(),
+            new Promise<{ installed: boolean; version?: string }>((resolve) =>
+              setTimeout(() => resolve({ installed: true, version: 'openclaw' }), 5000)
+            ),
+          ])
+          if (!verifyResult.installed) {
+            console.error('[AWS Setup] WARNING: OpenClaw AMI may not have OpenClaw/Docker. Continuing anyway...')
+          } else {
+            console.log('[AWS Setup] OpenClaw verified')
+          }
+          clawdbotResult = { success: true, version: 'openclaw' }
+        } catch (err) {
+          console.warn('[AWS Setup] Could not verify OpenClaw, assuming it exists:', err)
+          clawdbotResult = { success: true, version: 'openclaw' }
         }
-        
-        clawdbotResult = {
-          success: true,
-          version: verifyResult.version || '2026.1.22'
-        }
-      } catch (err) {
-        console.warn('[AWS Setup] Could not verify Clawdbot installation, assuming it exists:', err)
-        clawdbotResult = {
-          success: true,
-          version: '2026.1.22'
+      } else {
+        // Clawdbot custom AMI: verify Clawdbot (npm), then configure and start gateway process
+        console.log(`[AWS Setup] Using custom AMI (Clawdbot) - skipping installation (AMI: ${process.env.CLAWDBODY_AWS_CUSTOM_AMI_ID})`)
+        try {
+          const verifyResult = await Promise.race([
+            awsVMSetup.verifyClawdbotInstalled(),
+            new Promise<{ installed: boolean; version?: string }>((resolve) =>
+              setTimeout(() => resolve({ installed: true, version: '2026.1.22' }), 3000)
+            ),
+          ])
+          if (!verifyResult.installed) {
+            console.error('[AWS Setup] WARNING: Custom AMI may not have Clawdbot installed. Continuing anyway...')
+          } else {
+            console.log(`[AWS Setup] Clawdbot verified: version ${verifyResult.version || 'unknown'}`)
+          }
+          clawdbotResult = { success: true, version: verifyResult.version || '2026.1.22' }
+        } catch (err) {
+          console.warn('[AWS Setup] Could not verify Clawdbot installation, assuming it exists:', err)
+          clawdbotResult = { success: true, version: '2026.1.22' }
         }
       }
     } else {
@@ -230,34 +240,49 @@ export async function runAWSSetupProcess(
       await updateStatus({ clawdbotInstalled: true })
     }
 
-    // Configure Clawdbot with Telegram if token is provided
+    // Configure with Telegram if token is provided (OpenClaw or Clawdbot path)
     const finalTelegramToken = telegramBotToken || process.env.TELEGRAM_BOT_TOKEN
     const finalTelegramUserId = telegramUserId || process.env.TELEGRAM_USER_ID
 
     if (finalTelegramToken) {
-      // Get Clawdbot version from the result
-      const clawdbotVersion = clawdbotResult?.version || '2026.1.22'
-      
-      const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
-        llmApiKey,
-        llmProvider,
-        llmModel,
-        telegramBotToken: finalTelegramToken,
-        telegramUserId: finalTelegramUserId,
-        clawdbotVersion,
-        heartbeatIntervalMinutes: 30,
-        userId,
-        apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
-      })
-      await updateStatus({ telegramConfigured: telegramSuccess })
-
-      if (telegramSuccess) {
-        const gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+      if (openClawAmi) {
+        const telegramSuccess = await awsVMSetup.setupOpenClawTelegram({
           llmApiKey,
           llmProvider,
+          llmModel,
           telegramBotToken: finalTelegramToken,
+          telegramUserId: finalTelegramUserId,
+          heartbeatIntervalMinutes: 30,
+          userId,
+          apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
         })
-        await updateStatus({ gatewayStarted: gatewaySuccess })
+        await updateStatus({ telegramConfigured: telegramSuccess })
+        if (telegramSuccess) {
+          const gatewaySuccess = await awsVMSetup.startOpenClawGateway()
+          await updateStatus({ gatewayStarted: gatewaySuccess })
+        }
+      } else {
+        const clawdbotVersion = clawdbotResult?.version || '2026.1.22'
+        const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
+          llmApiKey,
+          llmProvider,
+          llmModel,
+          telegramBotToken: finalTelegramToken,
+          telegramUserId: finalTelegramUserId,
+          clawdbotVersion,
+          heartbeatIntervalMinutes: 30,
+          userId,
+          apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
+        })
+        await updateStatus({ telegramConfigured: telegramSuccess })
+        if (telegramSuccess) {
+          const gatewaySuccess = await awsVMSetup.startClawdbotGateway({
+            llmApiKey,
+            llmProvider,
+            telegramBotToken: finalTelegramToken,
+          })
+          await updateStatus({ gatewayStarted: gatewaySuccess })
+        }
       }
     }
 
