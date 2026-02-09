@@ -55,8 +55,50 @@ model User {
   setup         SetupState?
   integrations  Integration[]
   vms           VM[]
+  llmCredit     LlmCredit?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+}
+
+// Per-user LLM credits (Pro users with OpenRouter provisioned keys)
+model LlmCredit {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  openRouterKeyHash     String    // Hash of the provisioned key (for API calls)
+  status                String    @default("active") // active, exhausted, low
+
+  currentLimitCents     Int       @default(1500)   // Current OpenRouter limit in cents ($15 = 1500)
+  topupBalanceCents     Int       @default(0)     // Total top-up credits purchased (carries over)
+  monthlyAllowanceCents Int      @default(1500)   // $15/month free allowance
+
+  periodStart           DateTime  @default(now())
+  periodEnd             DateTime  // When monthly allowance resets
+  lastNotifiedAt        DateTime? // When we last sent exhaustion notification
+  lastUsageCheckAt      DateTime? // When we last fetched usage from OpenRouter
+  lastKnownUsageCents   Int?     // Cached usage from last check (for dashboard)
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([periodEnd])
+}
+
+model CreditTransaction {
+  id               String   @id @default(cuid())
+  userId           String
+  type             String   // "monthly_allowance", "topup", "monthly_reset"
+  amountCents      Int      // positive = credits added
+  description      String?
+  stripeSessionId  String?
+
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model VerificationToken {

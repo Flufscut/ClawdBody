@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
 import { prisma } from '@/lib/prisma'
 import { headers } from 'next/headers'
+import { applyTopUp } from '@/lib/credit-topup'
+import { ensureLlmCreditForProUser } from '@/lib/pro-credits-provisioning'
 
 export async function POST(req: NextRequest) {
     const body = await req.text()
@@ -25,8 +27,25 @@ export async function POST(req: NextRequest) {
             const session = event.data.object as any
 
             const userId = session.metadata?.userId
-            const action = session.metadata?.action
+            const type = session.metadata?.type
 
+            // Credit top-up (one-time payment)
+            if (type === 'credit_topup' && userId) {
+                const amountCents = parseInt(session.metadata?.amountCents ?? '0', 10)
+                if (amountCents > 0) {
+                    try {
+                        await applyTopUp(userId, amountCents, session.id)
+                        console.log(`[Stripe Webhook] Credit top-up applied for ${userId}: $${(amountCents / 100).toFixed(2)}`)
+                    } catch (err) {
+                        console.error('[Stripe Webhook] applyTopUp failed:', err)
+                        return new NextResponse('Top-up application failed', { status: 500 })
+                    }
+                }
+                return new NextResponse(null, { status: 200 })
+            }
+
+            // Pro subscription
+            const action = session.metadata?.action
             if (userId) {
                 // Update user status
                 await prisma.user.update({
@@ -38,8 +57,10 @@ export async function POST(req: NextRequest) {
                     },
                 })
 
+                // Provision OpenRouter credits for Pro (idempotent)
+                await ensureLlmCreditForProUser(userId)
+
                 // Don't deploy here - let the frontend handle deployment via /api/vms/deploy-pro
-                // This avoids webhook timeout issues and provides better UX with progress updates
                 if (action === 'deploy_pro_vm') {
                     console.log(`[Stripe Webhook] Pro subscription activated for ${userId}. VM deployment will be triggered by frontend.`)
                 }

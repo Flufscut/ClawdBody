@@ -1,11 +1,18 @@
 {
-  "buildCommand": "prisma generate && prisma db push --skip-generate && next build",
-  "framework": "nextjs",
-  "crons": [
-    {
-      "path": "/api/cron/gmail-sync",
-      "schedule": "0 0 * * *"
-    }
-  ]
+    "buildCommand": "prisma generate && prisma db push --skip-generate && next build",
+    "framework": "nextjs",
+    "crons": [
+        {
+            "path": "/api/cron/gmail-sync",
+            "schedule": "0 0 * * *"
+        },
+        {
+            "path": "/api/cron/check-credits",
+            "schedule": "*/15 * * * *"
+        },
+        {
+            "path": "/api/cron/reset-credits",
+            "schedule": "0 0 * * *"
+        }
+    ]
 }
-

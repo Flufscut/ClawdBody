@@ -571,8 +571,11 @@ Your workspace is at ${clawdDir}.
       }
     }
     
-    // Use the configured model
-    const primaryModel = llmModel
+    // Use the configured model. For OpenRouter, primary must be "openrouter/..." so Clawdbot uses OPENROUTER_API_KEY (not anthropic)
+    const primaryModel =
+      provider.id === 'openrouter' && !llmModel.startsWith('openrouter/')
+        ? `openrouter/${llmModel}`
+        : llmModel
 
     // Build env section for API key
     const envSection: Record<string, string> = {
@@ -611,8 +614,8 @@ Your workspace is at ${clawdDir}.
   },` : ''}
   "channels": {
     "telegram": {
-      "enabled": true,
-      "botToken": "${telegramBotToken}",
+      "enabled": ${telegramBotToken ? 'true' : 'false'},
+      "botToken": "${telegramBotToken || ''}",
       "dmPolicy": "allowlist",
       ${allowFromJson}
       "groupPolicy": "allowlist"

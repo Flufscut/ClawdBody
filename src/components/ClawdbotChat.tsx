@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, Bot, User, AlertCircle, RefreshCw, Sparkles, Zap, Brain, Trash2, Wifi, WifiOff, AlertTriangle, Plus } from 'lucide-react'
+import Link from 'next/link'
+import { Send, Loader2, Bot, User, AlertCircle, RefreshCw, Sparkles, Zap, Brain, Trash2, Wifi, WifiOff, AlertTriangle, Plus, CreditCard } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 
@@ -44,6 +45,8 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
   const [wsConnectionError, setWsConnectionError] = useState<string | null>(null)
   const [vmInfo, setVmInfo] = useState<VMInfo | null>(null)
   const [isMigrating, setIsMigrating] = useState(false)
+  const [creditsWarning, setCreditsWarning] = useState<string | null>(null)
+  const [creditsRefillUrl, setCreditsRefillUrl] = useState<string | null>(null)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -517,11 +520,23 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
         }
 
         if (!apiResponse.ok) {
-          throw new Error(data.error || `Server error: ${apiResponse.statusText || 'Unknown error'}`)
+          if (apiResponse.status === 402 && data.error === 'credits_exhausted') {
+            const msg = data.message || 'Your AI credits are used up.'
+            const refill = data.refillUrl || '/dashboard/credits'
+            throw new Error(`${msg} Add more at ${refill}`)
+          }
+          throw new Error(data.error || data.message || `Server error: ${apiResponse.statusText || 'Unknown error'}`)
         }
 
         if (data.sessionId) {
           setSessionId(data.sessionId)
+        }
+        if (data.creditsWarning) {
+          setCreditsWarning(data.creditsWarning)
+          setCreditsRefillUrl(data.refillUrl || '/dashboard/credits')
+        } else {
+          setCreditsWarning(null)
+          setCreditsRefillUrl(null)
         }
 
         response = data.response || 'No response received'
@@ -862,6 +877,20 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
 
       {/* Input area */}
       <div className="p-4 bg-gradient-to-t from-sam-bg via-sam-bg to-transparent">
+        {creditsWarning && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            <CreditCard className="w-4 h-4 shrink-0" />
+            <span className="flex-1">{creditsWarning}</span>
+            {creditsRefillUrl && (
+              <Link
+                href={creditsRefillUrl}
+                className="shrink-0 font-medium text-amber-400 hover:text-amber-300 underline"
+              >
+                Add credits
+              </Link>
+            )}
+          </div>
+        )}
         <div className="flex gap-3">
           <textarea
             ref={inputRef}

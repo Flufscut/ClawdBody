@@ -11,6 +11,7 @@ import { OrgoTerminal } from '@/components/OrgoTerminal'
 import { E2BTerminal } from '@/components/E2BTerminal'
 import { ClawdbotChat } from '@/components/ClawdbotChat'
 import { OrgoVNCDisplay } from '@/components/OrgoVNCDisplay'
+import { CreditsIndicator } from '@/components/CreditsIndicator'
 
 interface Connector {
   id: string
@@ -753,9 +754,12 @@ function LearningSourcesContent() {
                   Hi {session.user.name.split(' ')[0]}!
                 </span>
                 {(session.user as any).isPro ? (
-                  <Link href="/pro" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
-                    PRO
-                  </Link>
+                  <>
+                    <Link href="/pro" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
+                      PRO
+                    </Link>
+                    <CreditsIndicator isPro={true} />
+                  </>
                 ) : (
                   <Link href="/upgrade" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
                     FREE

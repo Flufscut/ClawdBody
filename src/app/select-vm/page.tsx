@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, ArrowRight, CheckCircle2, LogOut, X, Key, FolderPlus, AlertCircle, ExternalLink, Globe, Server, Plus, Trash2, Play, Power, ArrowLeft, ExternalLinkIcon, Settings, Rocket, ChevronDown, ChevronUp, ChevronRight, Sparkles, PenTool, User, Lightbulb, Share2, Link2, Check } from 'lucide-react'
 import type { Template, TemplateIdea } from '@/lib/templates'
 import { TEMPLATE_IDEAS, isEmojiLogo } from '@/lib/templates'
+import { CreditsIndicator } from '@/components/CreditsIndicator'
 
 type VMProvider = 'orgo' | 'e2b' | 'moltworker' | 'flyio' | 'aws' | 'railway' | 'digitalocean' | 'hetzner' | 'modal'
 
@@ -1751,9 +1752,12 @@ function SelectVMContent() {
                   Hi {session.user.name.split(' ')[0]}!
                 </span>
                 {(session.user as any).isPro ? (
-                  <Link href="/pro" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
-                    Pro
-                  </Link>
+                  <>
+                    <Link href="/pro" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
+                      Pro
+                    </Link>
+                    <CreditsIndicator isPro={true} />
+                  </>
                 ) : (
                   <Link href="/upgrade" className="bg-zinc-800 text-zinc-400 text-xs font-medium px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer">
                     Free

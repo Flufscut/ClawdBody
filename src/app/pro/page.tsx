@@ -48,8 +48,8 @@ export default function ProPage() {
     },
     {
       icon: Key,
-      title: 'Managed LLM API Key',
-      description: 'We handle your LLM API key management, so you can focus on building without worrying about configuration',
+      title: '$15/month in LLM credits',
+      description: 'We handle your LLM API key management and give you $15/month in AI credits, so you can focus on building without worrying about configuration',
     },
     {
       icon: Zap,

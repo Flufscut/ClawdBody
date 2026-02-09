@@ -12,6 +12,8 @@ import { findSetupStateDecrypted, findFirstVMDecrypted } from '@/lib/prisma-encr
 import { OrgoClient } from '@/lib/orgo'
 import { SSHTerminalProvider } from '@/lib/terminal/ssh-terminal'
 import { E2BClient } from '@/lib/e2b'
+import { prisma } from '@/lib/prisma'
+import { getOpenRouterKeyInfo } from '@/lib/openrouter-provisioning'
 
 export const maxDuration = 300 // 5 minutes max for long responses
 
@@ -95,7 +97,35 @@ export async function POST(request: NextRequest) {
     if (!llmApiKey) {
       return NextResponse.json({ error: 'No API key configured. Please add an LLM API key.' }, { status: 400 })
     }
-    
+
+    // Pro / OpenRouter: check credits before running the agent (never use Anthropic key for Pro)
+    let creditsWarning: string | null = null
+    const isManagedOpenRouter = (setupState as any).isManagedLlmApiKey && llmProvider === 'openrouter'
+    if (isManagedOpenRouter) {
+      const llmCredit = await prisma.llmCredit.findUnique({ where: { userId: session.user.id } })
+      if (llmCredit) {
+        try {
+          const keyInfo = await getOpenRouterKeyInfo(llmCredit.openRouterKeyHash)
+          const remaining = keyInfo.limit_remaining
+          if (remaining != null && remaining <= 0) {
+            return NextResponse.json(
+              {
+                error: 'credits_exhausted',
+                message: 'Your AI credits are used up. Please add more credits to continue.',
+                refillUrl: '/dashboard/credits',
+              },
+              { status: 402 }
+            )
+          }
+          if (remaining != null && remaining < 2) {
+            creditsWarning = 'Your AI credits are running low. Add more at Dashboard → AI Credits to avoid interruption.'
+          }
+        } catch (e) {
+          console.warn('[Clawdbot] Credit check failed:', e)
+        }
+      }
+    }
+
     // Build environment variable exports based on provider
     const envExports: string[] = []
     const envVarMap: Record<string, string> = {
@@ -306,6 +336,7 @@ cat ${pidFile}
         sessionId: chatSessionId,
         exitCode: result.exitCode,
         debug: { rawOutput, vmProvider },
+        ...(creditsWarning && { creditsWarning, refillUrl: '/dashboard/credits' }),
       })
     }
     
@@ -340,6 +371,7 @@ cat ${pidFile}
       response,
       sessionId: chatSessionId,
       exitCode: result.exitCode,
+      ...(creditsWarning && { creditsWarning, refillUrl: '/dashboard/credits' }),
     })
 
   } catch (error) {

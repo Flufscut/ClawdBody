@@ -1038,8 +1038,11 @@ During heartbeat, check the following:
       }
     }
     
-    // Use the configured model
-    const primaryModel = llmModel
+    // Use the configured model. For OpenRouter, primary must be "openrouter/..." so Clawdbot uses OPENROUTER_API_KEY (not anthropic)
+    const primaryModel =
+      provider.id === 'openrouter' && !llmModel.startsWith('openrouter/')
+        ? `openrouter/${llmModel}`
+        : llmModel
 
     // Build env section for API key
     const envSection: Record<string, string> = {
@@ -1280,7 +1283,11 @@ During heartbeat, check the following:
       }
     }
     
-    const primaryModel = llmModel
+    // For OpenRouter, primary must be "openrouter/..." so Clawdbot uses OPENROUTER_API_KEY (not anthropic)
+    const primaryModel =
+      provider.id === 'openrouter' && !llmModel.startsWith('openrouter/')
+        ? `openrouter/${llmModel}`
+        : llmModel
     const envSection: Record<string, string> = {
       [provider.envVar]: llmApiKey
     }

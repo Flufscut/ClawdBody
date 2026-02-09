@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { AWSClient } from '@/lib/aws'
 import { sanitizeName } from '@/lib/orgo'
 import { encrypt, decrypt } from '@/lib/encryption'
+import { ensureLlmCreditForProUser } from '@/lib/pro-credits-provisioning'
 
 // System AWS Credentials for Pro Users (from .env)
 const AWS_CONFIG = {
@@ -9,11 +10,6 @@ const AWS_CONFIG = {
     secretAccessKey: process.env.CLAWDBODY_AWS_SECRET_ACCESS_KEY!,
     region: process.env.CLAWDBODY_AWS_REGION || 'us-east-1',
 }
-
-// System LLM API Key (from .env)
-const LLM_API_KEY = process.env.CLAWDBODY_ANTHROPIC_API_KEY!
-const LLM_PROVIDER = 'anthropic'
-const LLM_MODEL = 'claude-sonnet-4-5'
 
 interface DeployProVMParams {
     userId: string
@@ -26,50 +22,41 @@ export async function deployProVM({ userId, name, templateId, agentName }: Deplo
     console.log(`[Pro Deployment] Starting for user ${userId}`)
 
     try {
-        // Validate required environment variables
         if (!AWS_CONFIG.accessKeyId || !AWS_CONFIG.secretAccessKey) {
             throw new Error('CLAWDBODY_AWS_ACCESS_KEY_ID and CLAWDBODY_AWS_SECRET_ACCESS_KEY must be set in environment')
         }
-        if (!LLM_API_KEY) {
-            throw new Error('CLAWDBODY_ANTHROPIC_API_KEY must be set in environment')
+
+        // 1. Ensure Pro user has OpenRouter credit account (no Anthropic key – Pro uses OpenRouter only)
+        const hasCredits = await ensureLlmCreditForProUser(userId)
+        if (!hasCredits) {
+            throw new Error(
+                'Please set up your AI credit account first: go to Dashboard → AI Credits and click "Set up credit account". ' +
+                'Pro VMs use OpenRouter credits only.'
+            )
         }
 
-        // 1. Store system AWS credentials and LLM API key in setupState (same as user flow)
-        // This allows the setup process to work exactly like when a user provides credentials
-        const setupState = await prisma.setupState.upsert({
+        // 2. Update setup state with AWS credentials and provisioning status only (do NOT overwrite llmApiKey – it’s already OpenRouter from ensureLlmCreditForProUser)
+        const setupState = await prisma.setupState.update({
             where: { userId },
-            create: {
-                userId,
+            data: {
                 status: 'provisioning',
                 vmProvider: 'aws',
                 awsRegion: AWS_CONFIG.region,
                 awsInstanceType: 'm7i-flex.large',
-                // Store encrypted system credentials (same format as user credentials)
                 awsAccessKeyId: encrypt(AWS_CONFIG.accessKeyId),
                 awsSecretAccessKey: encrypt(AWS_CONFIG.secretAccessKey),
-                // Store encrypted LLM API key - mark as managed
-                llmApiKey: encrypt(LLM_API_KEY),
-                llmProvider: LLM_PROVIDER,
-                llmModel: LLM_MODEL,
-                isManagedLlmApiKey: true, // Mark as managed key
-            },
-            update: {
-                status: 'provisioning',
-                vmProvider: 'aws',
-                awsRegion: AWS_CONFIG.region,
-                awsInstanceType: 'm7i-flex.large',
                 errorMessage: null,
-                // Update credentials (in case they changed in .env)
-                awsAccessKeyId: encrypt(AWS_CONFIG.accessKeyId),
-                awsSecretAccessKey: encrypt(AWS_CONFIG.secretAccessKey),
-                llmApiKey: encrypt(LLM_API_KEY),
-                llmProvider: LLM_PROVIDER,
-                llmModel: LLM_MODEL,
-                isManagedLlmApiKey: true, // Mark as managed key
             },
         })
 
-        // 2. Create VM record (same as /api/vms does)
+        if (!setupState.llmApiKey || !setupState.llmProvider) {
+            throw new Error('AI credit account is not fully set up. Please complete setup at Dashboard → AI Credits and try again.')
+        }
+        if (setupState.llmProvider !== 'openrouter') {
+            throw new Error('Pro VMs use OpenRouter only. Go to Dashboard → AI Credits, click "Set up credit account", then try again.')
+        }
+
+        // 3. Create VM record (same as /api/vms does)
         const vmName = name || 'Pro Workspace'
         const sanitizedName = sanitizeName(vmName)
         const instanceType = 'm7i-flex.large' // Free Tier eligible instance type
@@ -89,7 +76,7 @@ export async function deployProVM({ userId, name, templateId, agentName }: Deplo
             region: AWS_CONFIG.region,
         })
 
-        // 3. Create VM record with instance details (same as /api/vms)
+        // 4. Create VM record with instance details (same as /api/vms)
         const vm = await prisma.vM.create({
             data: {
                 userId,
@@ -107,7 +94,7 @@ export async function deployProVM({ userId, name, templateId, agentName }: Deplo
 
         console.log(`[Pro Deployment] Successfully created EC2 instance ${instance.id} with IP ${instance.publicIp}`)
 
-        // 4. Trigger setup process directly (same as /api/setup/start does)
+        // 5. Trigger setup process directly (same as /api/setup/start does)
         // Import and call runAWSSetupProcess directly with decrypted credentials
         const { runAWSSetupProcess } = await import('@/lib/aws-setup-process')
         
@@ -120,8 +107,8 @@ export async function deployProVM({ userId, name, templateId, agentName }: Deplo
         runAWSSetupProcess(
             userId,
             decryptedLlmApiKey,
-            setupState.llmProvider || LLM_PROVIDER,
-            setupState.llmModel || LLM_MODEL,
+            setupState.llmProvider || 'openrouter',
+            setupState.llmModel || 'anthropic/claude-sonnet-4',
             decryptedAccessKeyId,
             decryptedSecretAccessKey,
             AWS_CONFIG.region,

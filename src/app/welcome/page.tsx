@@ -85,8 +85,8 @@ export default function WelcomePage() {
     },
     {
       icon: Key,
-      title: 'Managed LLM API Key',
-      description: 'We handle all API key management - no setup required',
+      title: '$15/month in LLM credits',
+      description: 'We handle all API key management and give you $15/month in AI credits - no setup required',
     },
     {
       icon: Zap,
@@ -107,8 +107,12 @@ export default function WelcomePage() {
       text: 'Takes 20-25 minutes to set up',
     },
     {
+      icon: Key,
+      text: 'Bring your own keys – you provide and pay for your own API keys',
+    },
+    {
       icon: DollarSign,
-      text: 'You need to provide and pay for your own API keys',
+      text: 'You pay for your own API usage',
     },
     {
       icon: Server,
@@ -239,7 +243,7 @@ export default function WelcomePage() {
                   <span className="text-gray-500">to setup</span>
                 </div>
                 <p className="text-gray-400 mb-6">
-                  Requires manual configuration and your own API keys.
+                  Bring your own keys. Requires manual configuration.
                 </p>
               </div>
 

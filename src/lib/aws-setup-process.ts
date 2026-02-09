@@ -230,35 +230,34 @@ export async function runAWSSetupProcess(
       await updateStatus({ clawdbotInstalled: true })
     }
 
-    // Configure Clawdbot with Telegram if token is provided
-    const finalTelegramToken = telegramBotToken || process.env.TELEGRAM_BOT_TOKEN
-    const finalTelegramUserId = telegramUserId || process.env.TELEGRAM_USER_ID
+    // Always write Clawdbot config (clawdbot.json) and start gateway so web chat works.
+    // Telegram is optional; when no token, config has telegram enabled: false.
+    const finalTelegramToken = telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || ''
+    const finalTelegramUserId = telegramUserId || process.env.TELEGRAM_USER_ID || ''
 
-    if (finalTelegramToken) {
-      // Get Clawdbot version from the result
-      const clawdbotVersion = clawdbotResult?.version || '2026.1.22'
-      
-      const telegramSuccess = await awsVMSetup.setupClawdbotTelegram({
+    const clawdbotVersion = clawdbotResult?.version || '2026.1.22'
+    const configSuccess = await awsVMSetup.setupClawdbotTelegram({
+      llmApiKey,
+      llmProvider,
+      llmModel,
+      telegramBotToken: finalTelegramToken,
+      telegramUserId: finalTelegramUserId,
+      clawdbotVersion,
+      heartbeatIntervalMinutes: 30,
+      userId,
+      apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
+    })
+    await updateStatus({
+      telegramConfigured: configSuccess && !!finalTelegramToken,
+    })
+
+    if (configSuccess) {
+      const gatewaySuccess = await awsVMSetup.startClawdbotGateway({
         llmApiKey,
         llmProvider,
-        llmModel,
         telegramBotToken: finalTelegramToken,
-        telegramUserId: finalTelegramUserId,
-        clawdbotVersion,
-        heartbeatIntervalMinutes: 30,
-        userId,
-        apiBaseUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
       })
-      await updateStatus({ telegramConfigured: telegramSuccess })
-
-      if (telegramSuccess) {
-        const gatewaySuccess = await awsVMSetup.startClawdbotGateway({
-          llmApiKey,
-          llmProvider,
-          telegramBotToken: finalTelegramToken,
-        })
-        await updateStatus({ gatewayStarted: gatewaySuccess })
-      }
+      await updateStatus({ gatewayStarted: gatewaySuccess })
     }
 
     // Setup complete!
