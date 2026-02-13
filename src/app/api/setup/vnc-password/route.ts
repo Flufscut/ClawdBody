@@ -110,13 +110,14 @@ export async function GET(request: NextRequest) {
       // 3. Fetch from /computers/{id} to get the correct subdomain
       let hostname = data.hostname || ''
       
-      if (!hostname && data.instance_id) {
-        hostname = `${data.instance_id}.orgo.dev`
+      if (!hostname && data.fly_instance_id) {
+        hostname = `${data.fly_instance_id}.orgo.dev`
       }
       
       if (!hostname) {
-        // Reason: Try fetching computer details to discover the correct instance ID.
-        // The Orgo API /computers/{id} response may include an instance_id or hostname.
+        // Reason: Fetch computer details to get the fly_instance_id, which is the correct
+        // WebSocket subdomain (e.g., "orgo-computer-p47xqwj3"). The Orgo API returns this
+        // in the "fly_instance_id" field and the "url" field.
         try {
           const computerResponse = await fetch(
             `${ORGO_API_BASE}/computers/${orgoComputerId}`,
@@ -126,12 +127,21 @@ export async function GET(request: NextRequest) {
           )
           if (computerResponse.ok) {
             const computerData = await computerResponse.json()
-            // Reason: Log the full response to diagnose which field has the correct ID
             console.log('[vnc-password] Orgo computer details:', JSON.stringify(computerData))
-            hostname = computerData.hostname 
-              || (computerData.instance_id ? `${computerData.instance_id}.orgo.dev` : '')
-              || (computerData.prefixed_id ? `${computerData.prefixed_id}.orgo.dev` : '')
-              || `${orgoComputerId}.orgo.dev`
+            
+            // Reason: The fly_instance_id field contains the correct subdomain ID.
+            // The url field contains the full URL (e.g., "https://orgo-computer-xxx.orgo.dev").
+            if (computerData.fly_instance_id) {
+              hostname = `${computerData.fly_instance_id}.orgo.dev`
+            } else if (computerData.url) {
+              // Extract hostname from URL (e.g., "https://orgo-computer-xxx.orgo.dev" -> "orgo-computer-xxx.orgo.dev")
+              try {
+                hostname = new URL(computerData.url).hostname
+              } catch {
+                // URL parsing failed, try stripping protocol
+                hostname = computerData.url.replace(/^https?:\/\//, '')
+              }
+            }
           }
         } catch (fetchErr) {
           console.warn('[vnc-password] Failed to fetch computer details for hostname:', fetchErr)
