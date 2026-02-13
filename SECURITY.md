@@ -50,9 +50,22 @@ Start with the minimum set of skills and expand gradually:
 
 ### Environment Variables
 - All secrets are stored as Railway environment variables (masked in logs).
-- The Prisma schema encrypts OAuth tokens in the database.
+- The Prisma schema encrypts OAuth tokens in the database via AES-256-GCM
+  (using ENCRYPTION_KEY and USER_DATA_ENCRYPTION_KEY).
 - Never store API keys, passwords, or tokens on the Orgo VM filesystem
   where ClawdBot can read them.
+
+### ClawRouter Wallet Security
+ClawRouter uses a USDC wallet on Base L2 for x402 micropayments:
+- **Wallet key location:** `~/.openclaw/blockrun/wallet.key` on the Orgo VM
+- **The private key is never transmitted.** Only EIP-712 signatures are sent
+  to authorize payments. The signing happens locally on the VM.
+- **Protect the wallet key file.** If an attacker gains access to the VM
+  filesystem, they could drain the wallet. Keep only small amounts funded.
+- **Monitor balance.** Use `/wallet` or `/stats` in the agent chat to check
+  balance and spending. Start with $5-10 and top up as needed.
+- **Non-custodial.** BlockRun (ClawRouter's provider) never holds your funds.
+  You retain full control of the wallet.
 
 ### Memory File Safety
 - Agent memory files (`memory.md`, daily logs) are plain text on the VM.

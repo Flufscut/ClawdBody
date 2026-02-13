@@ -2,12 +2,29 @@
 
 ## Project Overview
 
-OpenClaw is a personal deployment of ClawdBody -- a one-click deployment platform for ClawdBot,
-an autonomous AI agent built on the OpenClaw framework. The agent runs 24/7 on a cloud VM with
-persistent memory, intelligent reasoning (via Claude API), and the ability to act in the real
-world (send emails, manage calendar, browse the web, run commands, etc.).
+OpenClaw is a personal deployment of an autonomous AI assistant built on three open-source
+repositories that work together:
+
+1. **OpenClaw** (`openclaw/openclaw`) -- The core AI assistant runtime with 16+ messaging
+   channels, 40+ skills, persistent memory, browser automation, and a WebSocket gateway.
+2. **ClawdBody** (`Prakshal-Jain/ClawdBody`) -- A one-click deployment platform (Next.js)
+   that manages VM provisioning, integrations, and the web dashboard.
+3. **ClawRouter** (`BlockRunAI/ClawRouter`) -- A smart LLM cost router that routes requests
+   to the cheapest capable model across 30+ LLMs, saving ~92% on API costs.
+
+The agent runs 24/7 on a cloud VM with persistent memory, intelligent reasoning, and the
+ability to act in the real world (send emails, manage calendar, browse the web, run commands,
+control smart home devices, etc.).
 
 ## Architecture
+
+### Three-Repo Ecosystem
+
+| Repository | Role | Technology |
+|-----------|------|------------|
+| **OpenClaw** | Core agent runtime, gateway, channels, skills, memory, CLI | TypeScript, Node.js, pnpm monorepo |
+| **ClawdBody** | Web deployment platform, VM management, OAuth integrations | Next.js 14, Prisma, PostgreSQL |
+| **ClawRouter** | LLM cost optimization, multi-model routing, x402 payments | TypeScript, viem (Ethereum) |
 
 ### High-Level Components
 
@@ -18,43 +35,67 @@ world (send emails, manage calendar, browse the web, run commands, etc.).
    - Integration management (Gmail, Calendar, Telegram)
    - PostgreSQL database for persistent state (Prisma ORM)
 
-2. **ClawdBot (AI Agent)** -- Python-based autonomous agent running on Orgo VM
-   - Claude API for reasoning and task execution
-   - Persistent memory system (markdown files + daily logs)
-   - Communication helper scripts (email, calendar)
-   - Sandboxed execution environment
+2. **OpenClaw (Agent Runtime)** -- TypeScript-based autonomous agent on Orgo VM
+   - Gateway WebSocket server at `ws://localhost:18789`
+   - 16+ messaging channels (Telegram, WhatsApp, Slack, Discord, etc.)
+   - 40+ skills (coding, email, calendar, GitHub, browser, smart home, etc.)
+   - Persistent memory system (SQLite-vec, markdown files, daily logs)
+   - Pi agent runtime with tool streaming and multi-agent support
+   - Native companion apps for macOS, iOS, Android
 
-3. **PostgreSQL Database** -- Railway-managed instance
+3. **ClawRouter (Cost Router)** -- OpenClaw extension for LLM optimization
+   - 15-dimension local scoring engine (<1ms, zero external calls)
+   - Routes simple queries to cheap/free models, complex to premium
+   - 30+ models across OpenAI, Anthropic, Google, DeepSeek, xAI, Moonshot
+   - x402 USDC micropayments on Base L2 (non-custodial)
+   - 4 routing profiles: auto, eco, premium, free
+
+4. **PostgreSQL Database** -- Railway-managed instance
    - User accounts and sessions
-   - OAuth tokens (encrypted)
+   - OAuth tokens (encrypted via AES-256-GCM)
    - VM configuration and state
    - Chat message history
    - Integration metadata
 
 ### Tech Stack
 
-| Layer         | Technology                              |
-|---------------|----------------------------------------|
-| Frontend      | Next.js 14, React 18, Tailwind CSS     |
-| Backend       | Next.js API Routes, Prisma 5           |
-| Database      | PostgreSQL (Railway)                    |
-| Auth          | NextAuth v4, Google OAuth 2.0          |
-| Terminal      | xterm.js, SSH2, WebSocket              |
-| Agent         | Python, Claude API (Anthropic)         |
-| VM Provider   | Orgo (managed cloud VMs)               |
-| Deployment    | Railway (nixpacks, Node.js 20)         |
+| Layer         | Technology                                      |
+|---------------|-------------------------------------------------|
+| Frontend      | Next.js 14, React 18, Tailwind CSS              |
+| Backend       | Next.js API Routes, Prisma 5                    |
+| Database      | PostgreSQL (Railway)                             |
+| Auth          | NextAuth v4, Google OAuth 2.0                   |
+| Terminal      | xterm.js, SSH2, WebSocket                        |
+| Agent Runtime | OpenClaw (TypeScript), Pi agent, Claude API      |
+| LLM Router    | ClawRouter, 30+ models, x402 micropayments       |
+| VM Provider   | Orgo (managed cloud VMs)                         |
+| Deployment    | Railway (nixpacks, Node.js 20)                   |
 
 ### Data Flow
 
 ```
 User (Browser) --> ClawdBody (Railway) --> PostgreSQL (Railway)
                         |
-                        +--> SSH/WebSocket --> ClawdBot Agent (Orgo VM)
+                        +--> SSH/WebSocket --> OpenClaw Gateway (Orgo VM :18789)
                                                   |
-                                                  +--> Claude API (Anthropic)
-                                                  +--> Gmail API (Google)
-                                                  +--> Calendar API (Google)
-                                                  +--> Memory Files (local disk)
+                                                  +--> ClawRouter --> 30+ LLM Models
+                                                  |                   (routes by complexity)
+                                                  +--> Skills (40+)
+                                                  |     +--> Gmail API
+                                                  |     +--> Calendar API
+                                                  |     +--> GitHub API
+                                                  |     +--> Browser (Playwright)
+                                                  |     +--> Smart Home (OpenHue)
+                                                  |
+                                                  +--> Memory System
+                                                  |     +--> SQLite-vec (vector search)
+                                                  |     +--> memory.md (long-term)
+                                                  |     +--> YYYY-MM-DD.md (daily logs)
+                                                  |
+                                                  +--> Channels (16+)
+                                                        +--> Telegram, WhatsApp, Slack
+                                                        +--> Discord, Signal, iMessage
+                                                        +--> WebChat, Google Chat, etc.
 ```
 
 ## Key Files & Directories
@@ -119,3 +160,17 @@ User (Browser) --> ClawdBody (Railway) --> PostgreSQL (Railway)
 - **Build**: nixpacks with Node.js 20
 - **Database**: Railway PostgreSQL plugin with persistent volume
 - **Domain**: `clawdbody-app-production.up.railway.app`
+
+## VM Setup Scripts
+
+Located in `scripts/`:
+- `setup-clawrouter.sh` -- Installs ClawRouter extension, configures routing profile
+- `enable-all-skills.sh` -- Enables all 40+ OpenClaw skills
+
+Run these via the ClawdBody web terminal after the Orgo VM is provisioned.
+
+## Source Repositories
+
+- **OpenClaw Core**: https://github.com/openclaw/openclaw
+- **ClawdBody**: https://github.com/Prakshal-Jain/ClawdBody (fork: Flufscut/ClawdBody)
+- **ClawRouter**: https://github.com/BlockRunAI/ClawRouter

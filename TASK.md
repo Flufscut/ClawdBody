@@ -43,13 +43,37 @@
 - [x] **Create security documentation** (2026-02-13)
   - SECURITY.md with access control, exec approval, skill management guidance
 
+- [x] **Complete web UI setup** (2026-02-13)
+  - Signed in with Google OAuth
+  - Entered Claude API key and Orgo API key
+  - VM provisioning initiated via Orgo
+  - Enabled Gmail and Calendar connect buttons (upstream had them disabled)
+
+- [x] **Enable Gmail/Calendar integration buttons** (2026-02-13)
+  - Upstream repo had `available: false` for all connectors
+  - Flipped Gmail and Calendar to `available: true` in learning-sources page
+  - Pushed fix to fork and redeployed
+
+- [x] **Add encryption keys** (2026-02-13)
+  - Generated ENCRYPTION_KEY and USER_DATA_ENCRYPTION_KEY
+  - Set in Railway for AES-256-GCM encryption of API keys and user PII
+
 ### In Progress
 
-- [ ] **Complete web UI setup** (2026-02-13)
-  - Sign in with Google OAuth
-  - Enter Claude API key
-  - Select VM provider and provision Orgo VM
-  - Connect Gmail and Calendar integrations
+- [ ] **Install ClawRouter on Orgo VM** (2026-02-13)
+  - Created `scripts/setup-clawrouter.sh` for VM execution
+  - Configures auto routing profile and USDC wallet
+  - Run via web terminal once VM is fully provisioned
+
+- [ ] **Enable all OpenClaw skills** (2026-02-13)
+  - Created `scripts/enable-all-skills.sh` for VM execution
+  - Enables 40+ bundled skills (coding, email, calendar, GitHub, browser, etc.)
+  - Run via web terminal after ClawRouter setup
+
+- [ ] **Fund ClawRouter USDC wallet**
+  - Wallet auto-generated at `~/.openclaw/blockrun/wallet.key`
+  - Send USDC (Base L2) to wallet address
+  - $5-10 provides substantial runway at ~92% savings
 
 ### Pending Tasks
 
@@ -57,15 +81,17 @@
   - Copy persona/ templates to /home/user/clawd/ on the Orgo VM
   - Customize USER.md with personal details
 
-- [ ] **Apply security hardening on VM**
-  - Enable exec approval for shell commands
-  - Restrict agent skills to minimum needed
-  - Verify file system restrictions
+- [ ] **Verify full stack operation**
+  - Test ClawRouter cost routing (simple vs complex queries)
+  - Test skills (GitHub, email, calendar, web browsing)
+  - Test memory persistence across sessions
+  - Run /stats to check cost breakdown
 
 - [ ] **Optional integrations**
   - ElevenLabs TTS (text-to-speech)
   - Telegram bot for mobile access
   - Memory backup strategy (git-based)
+  - Additional channels (WhatsApp, Slack, Discord)
 
 ## Discovered During Work
 
@@ -82,4 +108,6 @@
 - **Railway Project URL**: https://railway.app/project/cda577ca-ad7f-46ed-aeaa-a48614d0591a
 - **App URL**: https://clawdbody-app-production.up.railway.app
 - **GitHub Fork**: https://github.com/Flufscut/ClawdBody
-- **Upstream Repo**: https://github.com/Prakshal-Jain/ClawdBody
+- **Upstream ClawdBody**: https://github.com/Prakshal-Jain/ClawdBody
+- **OpenClaw Core**: https://github.com/openclaw/openclaw
+- **ClawRouter**: https://github.com/BlockRunAI/ClawRouter
