@@ -130,7 +130,7 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
         return
       }
 
-      let passwordData: { password?: string }
+      let passwordData: { password?: string; hostname?: string }
       try {
         passwordData = await passwordResponse.json()
       } catch (parseError) {
@@ -141,7 +141,7 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
         return
       }
 
-      const { password } = passwordData
+      const { password, hostname: apiHostname } = passwordData
       if (!password) {
         const errorMsg = 'VNC password not returned from server'
         console.error('[ClawdbotChat] VNC password not returned')
@@ -154,12 +154,10 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
       setWsConnectionError(null)
 
       // Step 2: Connect with password as token
-      // Reason: Orgo WebSocket URL uses raw computer ID (UUID) without prefix.
-      // Previously 'orgo-' was incorrectly added causing "Computer not found" errors.
-      const computerId = vmInfo.orgoComputerId.startsWith('orgo-')
-        ? vmInfo.orgoComputerId.slice(5)
-        : vmInfo.orgoComputerId
-      const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=200&rows=50`
+      // Reason: Use hostname from the API (which resolves the correct Orgo instance ID
+      // like "orgo-computer-xxx.orgo.dev"). Fall back to raw computer ID if not provided.
+      const hostname = apiHostname || `${vmInfo.orgoComputerId}.orgo.dev`
+      const wsUrl = `wss://${hostname}/terminal?token=${encodeURIComponent(password)}&cols=200&rows=50`
       console.log('[ClawdbotChat] Connecting to WebSocket:', wsUrl.replace(password, '***'))
 
       const ws = new WebSocket(wsUrl)

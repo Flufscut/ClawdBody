@@ -157,44 +157,33 @@ export function OrgoTerminal({
     setError(null)
 
     try {
-      // Step 1: Get the VNC password (which is used as the token)
+      // Step 1: Get the VNC password and hostname from the API
+      // Reason: The API now returns the correct Orgo hostname (e.g., orgo-computer-xxx.orgo.dev)
+      // instead of constructing it from the UUID, which was causing "Computer not found" errors.
       let password: string
-      if (vmId) {
-        // Use vmId to get password via API
-        const passwordResponse = await fetch(`/api/setup/vnc-password?vmId=${vmId}`)
-        if (!passwordResponse.ok) {
-          const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
-          throw new Error(errorData.error || 'Failed to get VNC password')
-        }
-        const data = await passwordResponse.json()
-        password = data.password
-      } else {
-        // Fallback: try without vmId (uses setupState)
-        const passwordResponse = await fetch('/api/setup/vnc-password')
-        if (!passwordResponse.ok) {
-          const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
-          throw new Error(errorData.error || 'Failed to get VNC password')
-        }
-        const data = await passwordResponse.json()
-        password = data.password
+      let apiHostname: string | undefined
+      const url = vmId ? `/api/setup/vnc-password?vmId=${vmId}` : '/api/setup/vnc-password'
+      const passwordResponse = await fetch(url)
+      if (!passwordResponse.ok) {
+        const errorData = await passwordResponse.json().catch(() => ({ error: 'Failed to get VNC password' }))
+        throw new Error(errorData.error || 'Failed to get VNC password')
       }
+      const data = await passwordResponse.json()
+      password = data.password
+      apiHostname = data.hostname
 
       if (!password) {
         throw new Error('VNC password not returned')
       }
 
       // Step 2: Connect with password as token
-      // Get terminal dimensions
       const cols = xtermRef.current?.cols || 80
       const rows = xtermRef.current?.rows || 24
 
-      // Reason: Orgo WebSocket URL format is wss://{computer_id}.orgo.dev/terminal
-      // The computer ID should be used as-is (raw UUID). Previously an 'orgo-' prefix
-      // was incorrectly added, causing "Computer not found" (code 4004) errors.
-      const computerId = resolvedComputerId.startsWith('orgo-')
-        ? resolvedComputerId.slice(5)
-        : resolvedComputerId
-      const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=${cols}&rows=${rows}`
+      // Reason: Use the hostname returned by the API (which queries Orgo for the correct
+      // instance ID like "orgo-computer-xxx.orgo.dev"). Fall back to raw computer ID if needed.
+      const hostname = apiHostname || `${resolvedComputerId}.orgo.dev`
+      const wsUrl = `wss://${hostname}/terminal?token=${encodeURIComponent(password)}&cols=${cols}&rows=${rows}`
       console.log('[OrgoTerminal] Raw computer ID:', resolvedComputerId)
       console.log('[OrgoTerminal] Connecting to WebSocket:', wsUrl.replace(password, '***'))
 

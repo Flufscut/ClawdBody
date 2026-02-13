@@ -102,8 +102,49 @@ export async function GET(request: NextRequest) {
 
       const data = await response.json()
       
-      // The hostname is [computer id].orgo.dev
-      const hostname = `${orgoComputerId}.orgo.dev`
+      // Reason: Orgo uses a short instance ID (e.g., "orgo-computer-p47xqwj3") for
+      // WebSocket/VNC subdomains, NOT the UUID. The VNC password response or a separate
+      // computer details call may provide the correct hostname. We check multiple sources:
+      // 1. data.hostname from the VNC password response (if Orgo provides it)
+      // 2. data.instance_id from the VNC password response
+      // 3. Fetch from /computers/{id} to get the correct subdomain
+      let hostname = data.hostname || ''
+      
+      if (!hostname && data.instance_id) {
+        hostname = `${data.instance_id}.orgo.dev`
+      }
+      
+      if (!hostname) {
+        // Reason: Try fetching computer details to discover the correct instance ID.
+        // The Orgo API /computers/{id} response may include an instance_id or hostname.
+        try {
+          const computerResponse = await fetch(
+            `${ORGO_API_BASE}/computers/${orgoComputerId}`,
+            {
+              headers: { 'Authorization': `Bearer ${orgoApiKey}` },
+            }
+          )
+          if (computerResponse.ok) {
+            const computerData = await computerResponse.json()
+            // Reason: Log the full response to diagnose which field has the correct ID
+            console.log('[vnc-password] Orgo computer details:', JSON.stringify(computerData))
+            hostname = computerData.hostname 
+              || (computerData.instance_id ? `${computerData.instance_id}.orgo.dev` : '')
+              || (computerData.prefixed_id ? `${computerData.prefixed_id}.orgo.dev` : '')
+              || `${orgoComputerId}.orgo.dev`
+          }
+        } catch (fetchErr) {
+          console.warn('[vnc-password] Failed to fetch computer details for hostname:', fetchErr)
+        }
+      }
+      
+      // Fallback to UUID-based hostname (may not work, but better than nothing)
+      if (!hostname) {
+        hostname = `${orgoComputerId}.orgo.dev`
+      }
+      
+      // Reason: Log for debugging which hostname format is being used
+      console.log('[vnc-password] Using hostname:', hostname, 'for computer:', orgoComputerId)
       
       return NextResponse.json({
         password: data.password,
