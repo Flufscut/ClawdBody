@@ -26,27 +26,41 @@
 - [x] **Generate Railway domain** (2025-02-13)
   - Domain: `clawdbody-app-production.up.railway.app`
 
+- [x] **Set Google OAuth credentials** (2026-02-13)
+  - Created Google Cloud project with Gmail API and Calendar API enabled
+  - Configured OAuth consent screen and credentials
+  - Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Railway
+
+- [x] **Fix build issues** (2026-02-13)
+  - Moved prisma db push from build to start command (Railway internal network issue)
+  - Fixed Stripe client lazy initialization (missing env var at build time)
+  - Both fixes pushed to fork and deployed successfully
+
+- [x] **Prepare persona templates** (2026-02-13)
+  - Created persona/ directory with SOUL.md, IDENTITY.md, USER.md, TOOLS.md
+  - Ready to be copied to VM once provisioned
+
+- [x] **Create security documentation** (2026-02-13)
+  - SECURITY.md with access control, exec approval, skill management guidance
+
 ### In Progress
 
-- [ ] **Set Google OAuth credentials** (2025-02-13)
-  - Waiting for user to create Google Cloud project and OAuth app
-  - Need: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-
-- [ ] **Complete web UI setup** (2025-02-13)
+- [ ] **Complete web UI setup** (2026-02-13)
   - Sign in with Google OAuth
   - Enter Claude API key
-  - Provision Orgo VM
+  - Select VM provider and provision Orgo VM
   - Connect Gmail and Calendar integrations
 
 ### Pending Tasks
 
-- [ ] **Customize agent persona files**
-  - Edit SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md
+- [ ] **Deploy persona files to VM**
+  - Copy persona/ templates to /home/user/clawd/ on the Orgo VM
+  - Customize USER.md with personal details
 
-- [ ] **Security hardening**
+- [ ] **Apply security hardening on VM**
   - Enable exec approval for shell commands
   - Restrict agent skills to minimum needed
-  - Consider VPN/Tailscale for access gating
+  - Verify file system restrictions
 
 - [ ] **Optional integrations**
   - ElevenLabs TTS (text-to-speech)
