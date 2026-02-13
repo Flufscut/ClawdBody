@@ -27,17 +27,21 @@ const connectors: Connector[] = [
     id: 'gmail',
     name: 'Gmail',
     icon: <Mail className="w-6 h-6" />,
-    description: 'Import project details and track the context of important conversations. (Currently unavailable)',
+    // Reason: Gmail OAuth integration is fully implemented via /api/integrations/gmail/connect.
+    // The upstream repo ships with available: false but the feature works.
+    description: 'Import project details and track the context of important conversations.',
     autoLiveSync: true,
-    available: false,
+    available: true,
   },
   {
     id: 'calendar',
     name: 'Google Calendar',
     icon: <Calendar className="w-6 h-6" />,
-    description: 'Sync your events so ClawdeBot stays on top of meetings, plans, and deadlines. (Currently unavailable)',
+    // Reason: Calendar OAuth integration is fully implemented via /api/integrations/calendar/connect.
+    // The upstream repo ships with available: false but the feature works.
+    description: 'Sync your events so ClawdeBot stays on top of meetings, plans, and deadlines.',
     autoLiveSync: true,
-    available: false,
+    available: true,
   },
   {
     id: 'github',
