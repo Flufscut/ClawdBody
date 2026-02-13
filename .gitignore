@@ -47,4 +47,7 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Documentation PDFs (reference only, not tracked)
+*.pdf
+
 
