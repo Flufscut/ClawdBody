@@ -188,12 +188,12 @@ export function OrgoTerminal({
       const cols = xtermRef.current?.cols || 80
       const rows = xtermRef.current?.rows || 24
 
-      // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
-      // Format from docs: wss://{computer_id}.orgo.dev/terminal?token={password}
-      // Add 'orgo-' prefix if not already present
+      // Reason: Orgo WebSocket URL format is wss://{computer_id}.orgo.dev/terminal
+      // The computer ID should be used as-is (raw UUID). Previously an 'orgo-' prefix
+      // was incorrectly added, causing "Computer not found" (code 4004) errors.
       const computerId = resolvedComputerId.startsWith('orgo-')
-        ? resolvedComputerId
-        : `orgo-${resolvedComputerId}`
+        ? resolvedComputerId.slice(5)
+        : resolvedComputerId
       const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=${cols}&rows=${rows}`
       console.log('[OrgoTerminal] Raw computer ID:', resolvedComputerId)
       console.log('[OrgoTerminal] Connecting to WebSocket:', wsUrl.replace(password, '***'))

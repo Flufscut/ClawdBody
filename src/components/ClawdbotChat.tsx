@@ -154,11 +154,11 @@ export function ClawdbotChat({ vmId, className = '', vmCreatedAt, onMigrate }: C
       setWsConnectionError(null)
 
       // Step 2: Connect with password as token
-      // WebSocket URL uses the computer ID as subdomain with 'orgo-' prefix
-      // Format from docs: wss://{computer_id}.orgo.dev/terminal?token={password}
+      // Reason: Orgo WebSocket URL uses raw computer ID (UUID) without prefix.
+      // Previously 'orgo-' was incorrectly added causing "Computer not found" errors.
       const computerId = vmInfo.orgoComputerId.startsWith('orgo-')
-        ? vmInfo.orgoComputerId
-        : `orgo-${vmInfo.orgoComputerId}`
+        ? vmInfo.orgoComputerId.slice(5)
+        : vmInfo.orgoComputerId
       const wsUrl = `wss://${computerId}.orgo.dev/terminal?token=${encodeURIComponent(password)}&cols=200&rows=50`
       console.log('[ClawdbotChat] Connecting to WebSocket:', wsUrl.replace(password, '***'))
 
