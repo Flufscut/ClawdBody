@@ -1,10 +1,13 @@
 [build]
 builder = "nixpacks"
 # Use npm install instead of npm ci to avoid lock file sync issues
-buildCommand = "npm install && npx prisma generate && npx prisma db push --skip-generate && npm run build"
+# Reason: prisma db push moved to startCommand because Railway's internal network
+# (postgres.railway.internal) is not available during the build phase.
+buildCommand = "npm install && npx prisma generate && npm run build"
 
 [deploy]
-startCommand = "npm run start"
+# Reason: Run prisma db push at startup when the internal DB network is reachable.
+startCommand = "npx prisma db push --skip-generate && npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
